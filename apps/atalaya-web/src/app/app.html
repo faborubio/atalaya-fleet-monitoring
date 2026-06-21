@@ -1,0 +1,14 @@
+<div class="shell">
+  <header class="shell__bar">
+    <span class="shell__brand">🗼 {{ title }}</span>
+    <nav class="shell__nav">
+      @for (item of nav; track item.path) {
+        <a [routerLink]="item.path" routerLinkActive="is-active">{{ item.label }}</a>
+      }
+    </nav>
+  </header>
+
+  <main class="shell__content">
+    <router-outlet />
+  </main>
+</div>

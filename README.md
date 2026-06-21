@@ -76,31 +76,51 @@ Las decisiones están registradas como **ADRs** en el [SAD](./SAD-Atalaya.md#5-d
 
 ## Estructura del repositorio
 
-> En construcción. Hoy el repo solo contiene la documentación rectora; el scaffold de
-> código se irá añadiendo por fases (ver [AUDIT.md](./AUDIT.md)).
+> Monorepo **Nx 21**. El frontend y el simulador ya existen; backend e infra se añaden
+> al desbloquear sus prerequisitos (ver [AUDIT.md](./AUDIT.md)).
 
 ```
 atalaya/
-├─ SAD-Atalaya.md      # Documento de arquitectura (rector)
-├─ README.md           # Este archivo
-├─ CLAUDE.md           # Contexto persistente entre sesiones de trabajo
-├─ AUDIT.md            # Bitácora de auditorías por fase/cambio
-├─ DEPLOY.md           # Guía de despliegue (local y AWS)
-└─ TROUBLESHOOTING.md  # Errores encontrados y sus soluciones
+├─ apps/
+│  ├─ atalaya-web/      # SPA Angular: shell + features lazy (mapa, dispositivos, alertas, históricos)
+│  └─ simulator/        # Generador de carga de telemetría (Node)
+│  ├─ api/    ⛔         # .NET Minimal API + hub SignalR (pendiente, falta SDK)
+│  └─ worker/ ⛔         # .NET Worker Service / consumidor SQS (pendiente)
+├─ infra/     ⛔         # AWS CDK (pendiente, falta Docker)
+├─ SAD-Atalaya.md       # Documento de arquitectura (rector)
+├─ README.md            # Este archivo
+├─ CLAUDE.md            # Contexto persistente entre sesiones de trabajo
+├─ AUDIT.md             # Bitácora de auditorías por fase/cambio
+├─ DEPLOY.md            # Guía de despliegue (local y AWS)
+└─ TROUBLESHOOTING.md   # Errores encontrados y sus soluciones
 ```
 
 ---
 
-## Empezar (cuando exista código)
+## Empezar
 
-Requisitos previos:
+```bash
+npm install
+
+# Frontend (dashboard en http://localhost:4200)
+npm start                 # = nx serve atalaya-web
+
+# Simulador de telemetría (en seco, sin backend aún)
+npx nx build simulator
+node dist/apps/simulator/main.js --rate 2000 --devices 100 --duration 10
+# con backend (Fase 1): INGEST_URL=http://localhost:3000/ingest node dist/apps/simulator/main.js --rate 5000
+
+# Verificación completa
+npx nx run-many -t lint test build
+```
+
+Prerequisitos pendientes (para backend e infra):
 
 - Node.js ≥ 20 y npm ≥ 10 ✅
-- **.NET SDK 8** ⛔ (pendiente de instalar — ver [TROUBLESHOOTING.md](./TROUBLESHOOTING.md))
-- **Docker Desktop** ⛔ (pendiente — necesario para LocalStack/Redis/SQS)
+- **.NET SDK 8** ⛔ (ver [TROUBLESHOOTING.md](./TROUBLESHOOTING.md#ts-001--no-hay-net-sdk-solo-runtime))
+- **Docker Desktop** ⛔ (ver [TROUBLESHOOTING.md](./TROUBLESHOOTING.md#ts-002--docker-no-disponible))
 
-Los pasos de arranque se documentarán en [DEPLOY.md](./DEPLOY.md) a medida que se
-construya cada parte.
+Más detalle en [DEPLOY.md](./DEPLOY.md).
 
 ---
 

@@ -36,6 +36,46 @@ proyecto.
 
 ---
 
+## AUD-002 — Scaffold Fase 0: monorepo Nx + Angular + simulador (2026-06-21)
+
+**Fase:** Fase 0 — Cimientos (frontend + simulador)
+**Alcance:** Generación del monorepo, app Angular (shell + rutas lazy), simulador de
+telemetría en Node, y verificación de build/lint/test.
+**Auditor:** Fabián Rubio + Claude
+
+### Hallazgos
+
+| Sev | Hallazgo | Acción | Estado |
+|-----|----------|--------|--------|
+| ✅ | Monorepo **Nx 21.6.11** (Angular 20.3, RxJS 7.8, TS 5.9) generado limpio | — | OK |
+| ✅ | App `atalaya-web`: shell + 4 rutas **lazy** (mapa/dispositivos/alertas/históricos), todo `OnPush` | — | OK |
+| ✅ | Build prod: **71 KB transfer** inicial (NFR < 250 KB ✔), code-splitting por feature | — | OK |
+| ✅ | `atalaya-web`: lint ✔, 2 tests ✔ | — | OK |
+| ✅ | `simulator`: genera telemetría (eventId+seq, modelo SAD §6); ~1800 ev/s en seco; lint ✔, 2 tests ✔ | — | OK |
+| 🟡 | Nx 23 incompatible con Angular por *TS solution setup* (project references) | Se fijó **Nx 21** (clásico integrado) | Resuelto → [TS-003](./TROUBLESHOOTING.md#ts-003--nx-23-incompatible-con-angular-ts-solution-setup) |
+| 🟡 | `npm audit`: 60 vulnerabilidades transitivas (dev) en el workspace fresco | Revisar con `npm audit`; priorizar high | Abierto |
+| 🔵 | Budget de bundle en `project.json` mide *raw* (500 KB warn), no gzip del NFR | Aceptable; vigilar transfer en cada build | Abierto |
+
+### Verificaciones
+
+- [x] `nx build atalaya-web` (producción) — OK, sin warnings de budget.
+- [x] `nx lint atalaya-web` / `nx lint simulator` — OK.
+- [x] `nx test atalaya-web` / `nx test simulator` — OK (4 tests).
+- [x] Simulador ejecutado en seco (`--rate 2000 --devices 100 --duration 3`) — 5.600 eventos, 0 fallos.
+- [x] `nx run-many -t lint test build` — OK para los 2 proyectos.
+
+### Conclusión
+
+Fase 0 entrega su parte ejecutable: un monorepo Nx limpio con una SPA Angular estructurada
+según el SAD (standalone, lazy, OnPush) y un generador de carga real. Todo compila, pasa
+lint y tests. Backend .NET e infra CDK/LocalStack siguen **bloqueados** por prerequisitos
+([TS-001](./TROUBLESHOOTING.md#ts-001--no-hay-net-sdk-solo-runtime),
+[TS-002](./TROUBLESHOOTING.md#ts-002--docker-no-disponible)).
+
+**Veredicto:** ✅ Fase 0 (frontend + simulador) completa y verificada.
+
+---
+
 ## AUD-001 — Estado inicial del repositorio y toolchain (2026-06-21)
 
 **Fase:** Fase 0 — Cimientos (arranque)

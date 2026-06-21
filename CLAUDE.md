@@ -51,19 +51,39 @@ con contexto y trade-offs. Si una decisión nueva surge, se añade como ADR al S
 ### Hecho
 - ✅ SAD v1.0.0 aprobado y leído.
 - ✅ Documentos base creados (README, AUDIT, DEPLOY, TROUBLESHOOTING, CLAUDE).
-- ✅ Auditoría inicial [AUD-001](./AUDIT.md#aud-001--estado-inicial-del-repositorio-y-toolchain-2026-06-21).
+- ✅ `git init` + `.gitignore` + commits.
+- ✅ **Monorepo Nx 21.6.11** (Angular 20.3, RxJS 7.8, TS 5.9). Se fijó Nx 21 por
+  incompatibilidad de Nx 23 con Angular ([TS-003](./TROUBLESHOOTING.md#ts-003--nx-23-incompatible-con-angular-ts-solution-setup)).
+- ✅ App `atalaya-web`: shell + 4 rutas lazy (mapa/dispositivos/alertas/históricos), `OnPush`.
+  Build 71 KB transfer, lint y tests verdes.
+- ✅ App `simulator` (Node): generador de carga de telemetría (modelo SAD §6), ~1800 ev/s en seco.
+- ✅ Auditorías [AUD-001](./AUDIT.md#aud-001--estado-inicial-del-repositorio-y-toolchain-2026-06-21)
+  y [AUD-002](./AUDIT.md#aud-002--scaffold-fase-0-monorepo-nx--angular--simulador-2026-06-21).
 
-### En curso
-- 🟡 `git init` + `.gitignore` + primer commit.
-- 🟡 Scaffold frontend: monorepo Nx + app Angular standalone + simulador Node.
+### Comandos útiles
+- `npm start` → sirve `atalaya-web` (http://localhost:4200)
+- `node dist/apps/simulator/main.js --rate 2000 --devices 100 --duration 5` → simulador en seco
+- `npx nx run-many -t lint test build` → verificación completa
 
 ### Bloqueado (prerequisitos por instalar)
 - 🔴 **Backend .NET** — falta .NET SDK 8 → [TS-001](./TROUBLESHOOTING.md#ts-001--no-hay-net-sdk-solo-runtime).
 - 🔴 **Infra CDK/LocalStack** — falta Docker Desktop → [TS-002](./TROUBLESHOOTING.md#ts-002--docker-no-disponible).
 
 ### Toolchain verificado (2026-06-21)
-- ✅ git 2.51 · Node v24.15 · npm 11.14
+- ✅ git 2.51 · Node v24.15 · npm 11.14 · Nx 21.6.11
 - 🔴 .NET: solo runtime 6.0.36, **sin SDK** · 🔴 Docker: no instalado
+
+### Estructura actual del repo
+```
+atalaya/
+├─ apps/
+│  ├─ atalaya-web/   # SPA Angular (shell + features lazy)
+│  └─ simulator/     # generador de carga de telemetría (Node)
+├─ *.md              # SAD, README, AUDIT, DEPLOY, TROUBLESHOOTING, CLAUDE
+└─ nx.json, package.json, tsconfig.base.json, eslint.config.mjs
+```
+Pendientes de crear (bloqueados): `apps/api` (.NET Minimal API), `apps/worker` (.NET),
+`infra/` (AWS CDK).
 
 ## 6. Decisiones de arquitectura clave (resumen — el detalle está en el SAD)
 

@@ -25,19 +25,23 @@ vivo: cada componente nuevo añade aquí sus pasos de arranque/despliegue.
 
 ## 1. Desarrollo local
 
-### 1.1 Frontend (Angular) — *disponible cuando exista el scaffold*
+### 1.1 Frontend (Angular) — ✅ disponible
 
 ```bash
 npm install
-npx nx serve atalaya-web      # dashboard en http://localhost:4200
+npm start                     # = nx serve atalaya-web → http://localhost:4200
 ```
 
-### 1.2 Simulador de telemetría — *Fase 0*
+### 1.2 Simulador de telemetría — ✅ disponible (Fase 0)
 
 ```bash
-# Genera carga configurable hacia el endpoint de ingesta
-npx nx run simulator:start -- --rate 1000 --devices 200
+npx nx build simulator
+# En seco (solo métricas en consola), útil sin backend:
+node dist/apps/simulator/main.js --rate 2000 --devices 100 --duration 10
+# Contra la ingesta (Fase 1), apuntando al endpoint:
+INGEST_URL=http://localhost:3000/ingest node dist/apps/simulator/main.js --rate 5000 --devices 500
 ```
+Flags: `--rate` (ev/s), `--devices`, `--duration` (s, 0 = ∞), `--url` (o `INGEST_URL`).
 
 ### 1.3 Backend .NET ⛔
 

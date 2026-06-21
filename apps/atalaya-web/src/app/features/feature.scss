@@ -1,0 +1,32 @@
+.feature {
+  max-width: 720px;
+
+  h2 {
+    margin: 0 0 0.75rem;
+    font-size: 1.4rem;
+  }
+
+  p {
+    margin: 0 0 0.75rem;
+    line-height: 1.55;
+    color: #c2cad3;
+  }
+
+  code {
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+    background: #21262d;
+    font-size: 0.85em;
+  }
+
+  &__status {
+    display: inline-block;
+    margin-top: 0.5rem;
+    padding: 0.3rem 0.6rem;
+    border-radius: 6px;
+    background: #2d2113;
+    color: #e3b341;
+    font-size: 0.85rem;
+    font-weight: 600;
+  }
+}

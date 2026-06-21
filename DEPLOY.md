@@ -1,0 +1,119 @@
+# DEPLOY.md — Despliegue
+
+Cómo se levanta Atalaya en **local** y cómo se despliega en **AWS**. Este documento es
+vivo: cada componente nuevo añade aquí sus pasos de arranque/despliegue.
+
+> **Estado actual (2026-06-21):** todavía no hay artefactos desplegables. Esta guía
+> describe el destino según el [SAD](./SAD-Atalaya.md) y se irá rellenando con comandos
+> reales y verificados a medida que exista código. Lo no implementado se marca con ⛔.
+
+---
+
+## 0. Prerrequisitos
+
+| Herramienta | Versión | Para qué | Estado |
+|---|---|---|---|
+| Node.js | ≥ 20 | Frontend Angular, Nx, simulador, CDK | ✅ v24.15 |
+| npm | ≥ 10 | Gestor de paquetes | ✅ 11.14 |
+| git | ≥ 2.40 | Control de versiones | ✅ 2.51 |
+| .NET SDK | 8.x | Backend (Minimal API + Workers) | ⛔ falta ([TS-001](./TROUBLESHOOTING.md#ts-001--no-hay-net-sdk-solo-runtime)) |
+| Docker Desktop | reciente | LocalStack, Redis, PostgreSQL, Testcontainers | ⛔ falta ([TS-002](./TROUBLESHOOTING.md#ts-002--docker-no-disponible)) |
+| AWS CLI | 2.x | Interactuar con AWS / LocalStack | ⛔ por instalar |
+| AWS CDK | 2.x | Infraestructura como código | ⛔ por instalar (`npm i -g aws-cdk`) |
+
+---
+
+## 1. Desarrollo local
+
+### 1.1 Frontend (Angular) — *disponible cuando exista el scaffold*
+
+```bash
+npm install
+npx nx serve atalaya-web      # dashboard en http://localhost:4200
+```
+
+### 1.2 Simulador de telemetría — *Fase 0*
+
+```bash
+# Genera carga configurable hacia el endpoint de ingesta
+npx nx run simulator:start -- --rate 1000 --devices 200
+```
+
+### 1.3 Backend .NET ⛔
+
+```bash
+# Requiere .NET SDK 8 (ver TROUBLESHOOTING TS-001)
+dotnet run --project apps/api        # Minimal API + hub SignalR
+dotnet run --project apps/worker     # consumidor SQS
+```
+
+### 1.4 Infra local con LocalStack ⛔
+
+```bash
+# Requiere Docker (ver TROUBLESHOOTING TS-002)
+docker compose up -d                 # LocalStack + Redis + PostgreSQL
+npx cdklocal bootstrap               # bootstrap CDK contra LocalStack
+npx cdklocal deploy                  # crea SNS/SQS/S3/... en local
+```
+
+El objetivo (ADR-009) es que **un dev levante el pipeline completo sin AWS real**.
+
+---
+
+## 2. Despliegue en AWS ⛔ *(planificado, no implementado)*
+
+Toda la infra se define con **AWS CDK** (ADR-009). Nada se crea a mano en la consola.
+
+### 2.1 Recursos que define el CDK
+
+- **SNS** (fan-out de ingesta) + **SQS** (buffer, standard y FIFO donde el orden importa).
+- **Lambda** de ingesta tras **API Gateway** (auth + validación + rate limiting).
+- **S3** data lake con lifecycle (cold/archive) + **Athena** para histórico.
+- **ElastiCache/Redis** (set de dedup + backplane SignalR).
+- **RDS/PostgreSQL** (read models + telemetría particionada).
+- **IAM** con mínimo privilegio; **Secrets Manager/SSM** para secretos.
+
+### 2.2 Flujo de despliegue
+
+```bash
+cdk diff      # revisar cambios contra el entorno
+cdk deploy    # aplicar infra
+```
+
+### 2.3 Pipeline CI/CD (objetivo, SAD §11)
+
+```
+install → lint (incl. reglas RxJS) → typecheck → unit (front + .NET) → marble tests
+        → build front + back → test integración (LocalStack) → E2E
+        → deploy infra (CDK diff/deploy) → smoke + carga ligera
+```
+
+- Monorepo **Nx** con caché de tareas afectadas.
+- Entornos efímeros por PR donde sea viable.
+- Versionado semántico de la API; contratos OpenAPI validados front↔back.
+
+---
+
+## 3. Smoke test post-despliegue ⛔
+
+Checklist mínimo tras cada deploy (se rellenará con comandos reales):
+
+- [ ] El simulador inyecta eventos y la cola los recibe (profundidad sube/baja).
+- [ ] El worker consume, deduplica y actualiza `device_state`.
+- [ ] El dashboard recibe deltas por SignalR (latencia evento→pantalla < 1.5 s P95).
+- [ ] Una regla de umbral dispara una alerta visible en la UI.
+- [ ] Tras reiniciar un worker, no hay pérdida (la cola retiene).
+
+---
+
+## 4. Rollback ⛔
+
+- Infra: `cdk deploy` de la versión anterior (estado en CloudFormation).
+- App: redeploy del artefacto previo (imágenes/versiones etiquetadas).
+- Datos: el S3 data lake es inmutable (fuente de verdad fría); los read models se pueden
+  reconstruir reproyectando desde los eventos crudos.
+
+---
+
+> A medida que cada pieza exista, sustituir los ⛔ por comandos **probados** y enlazar la
+> auditoría correspondiente en [AUDIT.md](./AUDIT.md).

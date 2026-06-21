@@ -1,0 +1,55 @@
+# Dependencias
+node_modules/
+.pnpm-store/
+
+# Nx
+.nx/cache
+.nx/workspace-data
+tmp/
+
+# Builds / salidas
+dist/
+build/
+out-tsc/
+coverage/
+
+# Angular
+.angular/
+
+# .NET
+bin/
+obj/
+*.user
+[Bb]in/
+[Oo]bj/
+
+# AWS CDK
+cdk.out/
+*.cdk.staging/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Entorno / secretos
+.env
+.env.*
+!.env.example
+*.pem
+aws.credentials
+
+# Editores / SO
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Testing
+.playwright/
+playwright-report/
+test-results/

@@ -10,10 +10,17 @@ namespace Atalaya.Api.Tests;
 /// Test de integración del camino caliente, sin Docker (WebApplicationFactory).
 /// Verifica: ingesta → bus → procesador → dedup → read model.
 /// </summary>
-public sealed class HotPathTests(WebApplicationFactory<Program> factory)
-    : IClassFixture<WebApplicationFactory<Program>>
+public sealed class HotPathTests : IClassFixture<WebApplicationFactory<Program>>
 {
-    private readonly HttpClient _client = factory.CreateClient();
+    private readonly HttpClient _client;
+
+    public HotPathTests(WebApplicationFactory<Program> factory)
+    {
+        // Fuerza el transporte in-memory: el test no depende de Docker/LocalStack.
+        _client = factory
+            .WithWebHostBuilder(b => b.UseSetting("Telemetry:Transport", "InMemory"))
+            .CreateClient();
+    }
 
     [Fact]
     public async Task Ingest_actualiza_el_read_model_y_deduplica()

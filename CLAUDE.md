@@ -61,7 +61,10 @@ con contexto y trade-offs. Si una decisión nueva surge, se añade como ADR al S
 - ✅ **Backend .NET** (`Atalaya.sln`): `libs/contracts` + `apps/api` (Minimal API + SignalR +
   ingesta/dedup/read model en memoria) + `apps/worker` (esqueleto) + `apps/api.tests`.
   Camino caliente verificado E2E con el simulador. Integrado en Nx (6 proyectos).
-- ✅ Auditorías [AUD-001](./AUDIT.md), [AUD-002](./AUDIT.md) y [AUD-003](./AUDIT.md#aud-003--backend-net-api--signalr--camino-caliente-en-memoria-2026-06-21).
+- ✅ **Frontend conectado al hub** (Fase 1 completa, modo dev): `TelemetryStreamService`
+  (SignalR + reconexión) → `FleetStore` (firehose fuera de NgRx, coalescencia 100ms, ADR-003/010)
+  → dashboard con mapa en vivo (canvas) + tabla de dispositivos. Lazo E2E verificado (4.050 ev, 0 pérdida).
+- ✅ Auditorías [AUD-001](./AUDIT.md), [AUD-002](./AUDIT.md), [AUD-003](./AUDIT.md) y [AUD-004](./AUDIT.md#aud-004--frontend-conectado-al-hub-camino-caliente-completo-2026-06-21).
 
 ### Decisiones de implementación a recordar
 - El procesamiento del camino caliente vive **en la API** (modo dev sin Docker). Objetivo:

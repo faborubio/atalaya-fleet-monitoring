@@ -36,6 +36,46 @@ proyecto.
 
 ---
 
+## AUD-004 — Frontend conectado al hub: camino caliente completo (2026-06-21)
+
+**Fase:** Fase 1 — Camino caliente (lazo cerrado: simulador → API → SignalR → dashboard)
+**Alcance:** Cliente SignalR en Angular, capa reactiva (FleetStore) con coalescencia,
+dashboard con mapa en vivo (canvas) y tabla de dispositivos en vivo.
+**Auditor:** Fabián Rubio + Claude
+
+### Hallazgos
+
+| Sev | Hallazgo | Acción | Estado |
+|-----|----------|--------|--------|
+| ✅ | `TelemetryStreamService`: HubConnection con reconexión automática → stream RxJS (ADR-002) | — | OK |
+| ✅ | `FleetStore`: firehose **fuera de NgRx** en capa reactiva con signals (ADR-003) | — | OK |
+| ✅ | Coalescencia por ventana de 100 ms antes de tocar el signal — un render por ventana (ADR-010) | — | OK |
+| ✅ | Snapshot inicial vía `GET /api/devices` + deltas en vivo; merge por `seq` (orden) | — | OK |
+| ✅ | Dashboard: mapa en vivo en **canvas** (sin deps externas) + métricas (count, ev/s, estado) | — | OK |
+| ✅ | Devices: tabla en vivo con `trackBy`; ordenada y acotada a 200 filas | — | OK |
+| ✅ | **E2E verificado por WebSocket**: cliente recibió 26 lotes = 4.050 eventos / 80 disp = lo enviado, **cero pérdida** | — | OK |
+| ✅ | Build 97 KB transfer (NFR < 250 KB ✔), lint y tests OK | — | OK |
+| 🔵 | Mapa es canvas básico; falta clustering/WebGL (deck.gl/Mapbox) y CDK Virtual Scroll | Mejora SAD §9 | Abierto |
+| 🔵 | URL de API hardcodeada en `devApiConfig` | Externalizar por entorno antes de prod | Abierto |
+
+### Verificaciones
+
+- [x] `nx build atalaya-web` — OK (97 KB transfer).
+- [x] `nx lint atalaya-web` / `nx test atalaya-web` — OK.
+- [x] Lazo real: API + simulador (1.500 ev/s, 80 disp, 3s) + cliente SignalR → 4.050 eventos recibidos, 0 pérdida.
+
+### Conclusión
+
+**El camino caliente está completo y demostrable de extremo a extremo**: el simulador
+inyecta, la API procesa y empuja por SignalR, y el cliente Angular materializa el firehose
+con coalescencia y lo pinta `OnPush`. Se respetan los ADR de tiempo real (002/003/004/010).
+Quedan mejoras de visualización (WebGL, virtual scroll) y la migración a infraestructura
+real (SQS/Redis/SQL) bloqueada por Docker ([TS-002](./TROUBLESHOOTING.md#ts-002--docker-no-disponible)).
+
+**Veredicto:** ✅ Fase 1 (camino caliente, modo dev) completa y verificada end-to-end.
+
+---
+
 ## AUD-003 — Backend .NET: API + SignalR + camino caliente en memoria (2026-06-21)
 
 **Fase:** Fase 1 (parcial) — Camino caliente, lado backend

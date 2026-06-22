@@ -137,7 +137,7 @@ Más detalle en [DEPLOY.md](./DEPLOY.md).
 | Fase | Alcance | Estado |
 |---|---|---|
 | **0 — Cimientos** | Monorepo Nx, esqueleto Angular + .NET, simulador, CI | ✅ (infra CDK pendiente Docker) |
-| **1 — Camino caliente** | Ingesta → cola → procesamiento → SignalR → dashboard en vivo | 🟡 Backend OK (modo dev); falta conectar dashboard |
+| **1 — Camino caliente** | Ingesta → cola → procesamiento → SignalR → dashboard en vivo | ✅ Modo dev (lazo completo verificado); falta SQS/Redis/SQL reales |
 | **2 — Alertas + camino frío** | Reglas + read model de alertas, histórico, S3/Athena | ⬜ Pendiente |
 | **3 — Endurecimiento** | DLQ/replay, OTel, prueba de carga 5k ev/s, seguridad | ⬜ Pendiente |
 

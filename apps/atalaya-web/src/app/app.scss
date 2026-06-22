@@ -26,6 +26,30 @@
     letter-spacing: 0.5px;
   }
 
+  &__live {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.8rem;
+    color: #9da7b3;
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #6e7681;
+    }
+
+    &.is-live {
+      color: #3fb950;
+      .dot {
+        background: #3fb950;
+        box-shadow: 0 0 6px #3fb950;
+      }
+    }
+  }
+
   &__nav {
     display: flex;
     gap: 0.5rem;

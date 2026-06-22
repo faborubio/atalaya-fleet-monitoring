@@ -1,0 +1,55 @@
+.feature {
+  h2 {
+    margin: 0 0 0.5rem;
+    font-size: 1.4rem;
+  }
+  .count {
+    color: #9da7b3;
+    font-weight: 400;
+  }
+}
+
+.muted {
+  color: #9da7b3;
+  code {
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+    background: #21262d;
+  }
+}
+
+.grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+
+  th,
+  td {
+    padding: 0.4rem 0.6rem;
+    text-align: right;
+    border-bottom: 1px solid #21262d;
+  }
+
+  th:first-child,
+  td:first-child {
+    text-align: left;
+    font-variant-numeric: tabular-nums;
+  }
+
+  thead th {
+    position: sticky;
+    top: 0;
+    background: #161b22;
+    color: #9da7b3;
+    font-weight: 600;
+  }
+
+  tbody tr:hover {
+    background: #161b22;
+  }
+
+  td {
+    font-variant-numeric: tabular-nums;
+    color: #c2cad3;
+  }
+}

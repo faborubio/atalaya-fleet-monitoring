@@ -6,6 +6,11 @@
         <a [routerLink]="item.path" routerLinkActive="is-active">{{ item.label }}</a>
       }
     </nav>
+    <span class="shell__live" [class.is-live]="fleet.live()">
+      <span class="dot"></span>
+      {{ fleet.live() ? 'en vivo' : 'sin conexión' }}
+      · {{ fleet.count() }} disp · {{ fleet.eventsPerSec() }} ev/s
+    </span>
   </header>
 
   <main class="shell__content">

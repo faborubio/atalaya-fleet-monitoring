@@ -1,5 +1,6 @@
 using Amazon.Runtime;
 using Amazon.SQS;
+using Atalaya.Persistence;
 using Atalaya.Worker;
 
 var builder = Host.CreateApplicationBuilder(args);
@@ -16,7 +17,12 @@ builder.Services.AddSingleton<IAmazonSQS>(_ =>
             AuthenticationRegion = aws.Region,
         }));
 
+builder.Services.AddAtalayaPersistence(builder.Configuration);
 builder.Services.AddHostedService<SqsTelemetryConsumer>();
 
 var host = builder.Build();
+
+// El worker es dueño del read model: asegura el esquema al arrancar.
+await host.Services.GetRequiredService<IDeviceStateRepository>().EnsureSchemaAsync();
+
 host.Run();

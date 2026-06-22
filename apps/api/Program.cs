@@ -4,17 +4,17 @@ using Atalaya.Api.Hubs;
 using Atalaya.Api.Processing;
 using Atalaya.Api.Services;
 using Atalaya.Contracts;
+using Atalaya.Persistence;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddSignalR();
 
-// Read model servido al dashboard (en memoria por ahora; Postgres en el siguiente paso).
-builder.Services.AddSingleton<IDeviceStateStore, InMemoryDeviceStateStore>();
-
 // Transporte de ingesta: "InMemory" (tests / dev sin Docker) o "Aws" (SNS→SQS, ADR-001).
 var transport = builder.Configuration["Telemetry:Transport"] ?? "InMemory";
-if (transport.Equals("Aws", StringComparison.OrdinalIgnoreCase))
+var useAws = transport.Equals("Aws", StringComparison.OrdinalIgnoreCase);
+
+if (useAws)
 {
     var aws = builder.Configuration.GetSection("Aws").Get<AwsOptions>() ?? new AwsOptions();
     builder.Services.AddSingleton(aws);
@@ -27,10 +27,13 @@ if (transport.Equals("Aws", StringComparison.OrdinalIgnoreCase))
                 AuthenticationRegion = aws.Region,
             }));
     builder.Services.AddSingleton<ITelemetryPublisher, SnsTelemetryPublisher>();
+    // El read model lo sirve Postgres (lo escribe el worker, ADR-005/008).
+    builder.Services.AddAtalayaPersistence(builder.Configuration);
 }
 else
 {
     // El procesamiento corre en proceso (ADR-008 lo mueve al worker en modo Aws).
+    builder.Services.AddSingleton<IDeviceStateStore, InMemoryDeviceStateStore>();
     builder.Services.AddSingleton<ITelemetryBus, InMemoryTelemetryBus>();
     builder.Services.AddSingleton<ITelemetryPublisher, InMemoryTelemetryPublisher>();
     builder.Services.AddSingleton<IDeduplicator, InMemoryDeduplicator>();
@@ -46,6 +49,9 @@ builder.Services.AddCors(options => options.AddPolicy(DevCors, policy => policy
 
 var app = builder.Build();
 
+if (useAws)
+    await app.Services.GetRequiredService<IDeviceStateRepository>().EnsureSchemaAsync();
+
 app.UseCors(DevCors);
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok", transport, ts = DateTimeOffset.UtcNow }));
@@ -58,7 +64,11 @@ app.MapPost("/ingest", async (TelemetryEvent[] events, ITelemetryPublisher publi
 });
 
 // Snapshot del read model: lo que el dashboard pide al cargar (camino caliente, ADR-005).
-app.MapGet("/api/devices", (IDeviceStateStore store) => Results.Ok(store.Snapshot()));
+if (useAws)
+    app.MapGet("/api/devices", async (IDeviceStateRepository repo, CancellationToken ct) =>
+        Results.Ok(await repo.GetAllAsync(ct)));
+else
+    app.MapGet("/api/devices", (IDeviceStateStore store) => Results.Ok(store.Snapshot()));
 
 // Hub de deltas en vivo (ADR-002).
 app.MapHub<TelemetryHub>("/hubs/telemetry");

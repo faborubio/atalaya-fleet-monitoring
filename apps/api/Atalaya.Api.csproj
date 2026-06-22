@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\libs\contracts\Atalaya.Contracts.csproj" />
+    <ProjectReference Include="..\..\libs\persistence\Atalaya.Persistence.csproj" />
   </ItemGroup>
 
   <ItemGroup>

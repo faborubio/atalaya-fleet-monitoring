@@ -3,6 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\libs\contracts\Atalaya.Contracts.csproj" />
     <ProjectReference Include="..\..\libs\persistence\Atalaya.Persistence.csproj" />
+    <ProjectReference Include="..\..\libs\realtime\Atalaya.Realtime.csproj" />
   </ItemGroup>
 
   <ItemGroup>

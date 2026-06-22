@@ -61,10 +61,22 @@ node dist/apps/simulator/main.js --rate 1000 --devices 50 --duration 5 --url htt
 curl http://localhost:3000/api/devices   # read model device_state poblado
 ```
 
-> **Modo dev vs objetivo.** Hoy la API procesa en proceso (bus en memoria). La
-> arquitectura objetivo (ADR-001/008) mueve el procesamiento al `worker` consumiendo
-> **SQS**; las interfaces `ITelemetryBus`/`IDeduplicator`/`IDeviceStateStore` permiten el
-> cambio sin reescribir la lógica.
+### 1.5 Pipeline real completo (modo Aws, requiere infra arriba)
+
+```bash
+docker compose -f infra/docker-compose.yml up -d   # LocalStack + Redis + Postgres
+npx nx serve api        # modo Aws (Development): publica a SNS, reenvía Redis→SignalR
+npx nx serve worker     # consume SQS → dedup(Redis) → Postgres → publica deltas a Redis
+npm start               # dashboard Angular en http://localhost:4200 (se conecta al hub)
+# inyectar carga:
+node dist/apps/simulator/main.js --rate 2000 --devices 100 --duration 30 --url http://localhost:3000/ingest
+```
+Flujo: `/ingest → SNS → SQS → worker → dedup → Postgres → Redis → API → SignalR → dashboard`.
+
+> **Transporte.** `Telemetry:Transport` = `Aws` en Development (pipeline real) o `InMemory`
+> (procesa en la API, sin Docker; lo usan los tests). Las interfaces
+> `ITelemetryPublisher`/`IDeviceStateRepository`/`IEventDeduplicator`/`ITelemetryBroadcaster`
+> permiten alternar sin reescribir la lógica.
 
 ### 1.4 Infra local con LocalStack — ✅ disponible
 

@@ -87,10 +87,18 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
 - Recursos: SNS `atalaya-telemetry`, SQS `atalaya-telemetry-queue`+`-dlq`, S3 `atalaya-datalake`.
 - LocalStack fijado a **3.7** (community; `latest` exige token pro — TS-007).
 
-### Pendiente (próximo gran paso): cablear .NET a la infra real
-Sustituir los shims en memoria por la infra (a través de las interfaces ya aisladas):
-ingesta → **SNS/SQS** (worker consume), dedup en **Redis**, read model en **Postgres**,
-y **backplane Redis** para que el worker empuje por SignalR (ADR-008). CDK (ADR-009) después.
+### Pipeline real cableado (Fase 1 completa, [AUD-006](./AUDIT.md#aud-006--cableado-del-pipeline-real-snssqs--redis--postgres--signalr-2026-06-22))
+`/ingest` → **SNS** → **SQS** → worker → **dedup Redis** → **Postgres** (read model) →
+**Redis pub/sub** → API (`RedisDeltaForwarder`) → **SignalR** → dashboard. Verificado E2E
+(4.680 ev, 0 pérdida). Flag `Telemetry:Transport` (InMemory|Aws): Development=Aws; tests=InMemory.
+- Libs: `libs/persistence` (Dapper/Npgsql), `libs/realtime` (Redis dedup + broadcaster).
+- Interfaces de extensión: `ITelemetryPublisher`, `IDeviceStateRepository`, `IEventDeduplicator`, `ITelemetryBroadcaster`.
+
+### Pendiente
+- **Fase 2**: S3 data lake + tabla `telemetry` particionada (ADR-007); alertas por umbral.
+- Productivizar: backplane nativo de SignalR (AddStackExchangeRedis); infra con **CDK** (ADR-009).
+- Para correr el pipeline: `docker compose -f infra/docker-compose.yml up -d`, luego
+  `nx serve api` + `nx serve worker` + `npm start` + simulador con `--url`.
 
 ### Toolchain verificado (2026-06-21)
 - ✅ git 2.51 · Node v24.15 · npm 11.14 · Nx 21.6.11 · **.NET SDK 8.0.422** · **Docker 29.5.3**
@@ -108,6 +116,9 @@ atalaya/
 │  ├─ worker/        # .NET Worker Service (esqueleto, consumo SQS pendiente)
 │  └─ api.tests/     # xUnit, test de integración del camino caliente
 ├─ libs/contracts/   # DTOs .NET compartidos (TelemetryEvent, DeviceState)
+├─ libs/persistence/ # read model en Postgres (Dapper/Npgsql)
+├─ libs/realtime/    # Redis: dedup (ADR-006) + broadcaster pub/sub (ADR-002)
+├─ infra/            # docker-compose: LocalStack + Redis + Postgres
 ├─ Atalaya.sln, nuget.config
 ├─ *.md              # SAD, README, AUDIT, DEPLOY, TROUBLESHOOTING, CLAUDE
 └─ nx.json, package.json, tsconfig.base.json, eslint.config.mjs

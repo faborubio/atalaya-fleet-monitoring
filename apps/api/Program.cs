@@ -5,6 +5,7 @@ using Atalaya.Api.Processing;
 using Atalaya.Api.Services;
 using Atalaya.Contracts;
 using Atalaya.Persistence;
+using Atalaya.Realtime;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -29,6 +30,9 @@ if (useAws)
     builder.Services.AddSingleton<ITelemetryPublisher, SnsTelemetryPublisher>();
     // El read model lo sirve Postgres (lo escribe el worker, ADR-005/008).
     builder.Services.AddAtalayaPersistence(builder.Configuration);
+    // Push en vivo: el worker publica deltas en Redis; la API los reenvía por SignalR (ADR-002).
+    builder.Services.AddAtalayaRedis(builder.Configuration);
+    builder.Services.AddHostedService<RedisDeltaForwarder>();
 }
 else
 {

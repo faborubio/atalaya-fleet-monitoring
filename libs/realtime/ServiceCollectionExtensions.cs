@@ -18,6 +18,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IConnectionMultiplexer>(
             _ => ConnectionMultiplexer.Connect(connStr));
         services.AddSingleton<IEventDeduplicator, RedisEventDeduplicator>();
+        services.AddSingleton<ITelemetryBroadcaster, RedisTelemetryBroadcaster>();
         return services;
     }
 }

@@ -36,6 +36,45 @@ proyecto.
 
 ---
 
+## AUD-006 — Cableado del pipeline real: SNS/SQS + Redis + Postgres + SignalR (2026-06-22)
+
+**Fase:** Fase 1 — Camino caliente sobre infraestructura real (sustituye los shims)
+**Alcance:** 4 pasos incrementales conectando los servicios .NET a la infra Docker.
+**Auditor:** Fabián Rubio + Claude
+
+### Hallazgos
+
+| Sev | Hallazgo | Estado |
+|-----|----------|--------|
+| ✅ | **Paso 1** — `/ingest` publica el lote a **SNS** (un mensaje); worker consume **SQS** (long-poll, redrive→DLQ). Flag `Telemetry:Transport` (InMemory\|Aws) preserva el test sin Docker | OK |
+| ✅ | **Paso 2** — `libs/persistence` (Dapper/Npgsql): worker hace **upsert** de `device_state` (unnest, guard seq); `GET /api/devices` lee de **Postgres** | OK |
+| ✅ | **Paso 3** — `libs/realtime`: **dedup en Redis** (SET NX EX, pipeline) en el worker; verificado con lote duplicado (aplicados=2, duplicados=2) | OK |
+| ✅ | **Paso 4** — worker publica deltas a **Redis pub/sub**; la API los reenvía por **SignalR** (`RedisDeltaForwarder`). Dashboard en vivo por el pipeline real | OK |
+| ✅ | **E2E del lazo completo**: simulador→API→SNS→SQS→worker→dedup→Postgres→Redis→API→SignalR→cliente = 4.680 eventos/60 disp, **cero pérdida** | OK |
+| 🔵 | Push usa puente Redis pub/sub, no el backplane nativo de SignalR (AddStackExchangeRedis) | Abierto (equivalente; productivizar) |
+| 🔵 | Falta escritura de crudos a **S3 data lake** y tabla `telemetry` particionada (ADR-007) | Abierto (Fase 2) |
+| 🔵 | Infra con `awslocal`, no **CDK** (ADR-009) | Abierto |
+
+### Verificaciones
+
+- [x] Build solución 0 errores; `nx test api-tests` (InMemory) verde.
+- [x] Paso 1: worker procesó 3.900/3.900.
+- [x] Paso 2: `/api/devices`=30 desde Postgres; `psql` confirma filas.
+- [x] Paso 3: dedup filtró el lote repetido; claves `dedup:*` en Redis.
+- [x] Paso 4: cliente SignalR recibió 4.680/4.680 vía pipeline real.
+
+### Conclusión
+
+El camino caliente ya **no usa shims en memoria**: corre sobre SNS/SQS, Postgres y Redis,
+con dedup idempotente y push en vivo, todo reproducible en local con Docker. Cada paso se
+hizo incremental, verificado y commiteado. Lo aislado tras interfaces
+(`ITelemetryPublisher`, `IDeviceStateRepository`, `IEventDeduplicator`,
+`ITelemetryBroadcaster`) permitió el cambio sin reescritura del dominio.
+
+**Veredicto:** ✅ Fase 1 sobre infraestructura real, completa y verificada E2E.
+
+---
+
 ## AUD-005 — Infraestructura de desarrollo en Docker (2026-06-21)
 
 **Fase:** Fase 1→2 (habilitación) — Infra local del pipeline event-driven

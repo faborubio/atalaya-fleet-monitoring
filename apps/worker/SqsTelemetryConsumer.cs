@@ -18,6 +18,7 @@ public sealed class SqsTelemetryConsumer(
     AwsOptions options,
     IEventDeduplicator deduplicator,
     IDeviceStateRepository repository,
+    ITelemetryBroadcaster broadcaster,
     ILogger<SqsTelemetryConsumer> logger) : BackgroundService
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -66,6 +67,7 @@ public sealed class SqsTelemetryConsumer(
             {
                 var deltas = fresh.Select(DeviceState.FromEvent).ToList();
                 await repository.UpsertAsync(deltas, stoppingToken);
+                await broadcaster.PublishDeltasAsync(deltas, stoppingToken); // push en vivo (ADR-002)
                 _processed += fresh.Count;
             }
 

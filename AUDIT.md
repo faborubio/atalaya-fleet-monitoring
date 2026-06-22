@@ -36,6 +36,56 @@ proyecto.
 
 ---
 
+## AUD-009 — Fase 1.5 (endurecimiento) + hallazgo de prueba de carga (2026-06-22)
+
+**Fase:** Fase 1.5 — Endurecimiento (Top 5 de [AUD-008](#aud-008--revisión-crítica-de-fases-01-brechas-con-producción-y-mejoras-2026-06-22)).
+**Alcance:** Reconexión, medición de latencia, push endurecido, auth de ingesta, carga k6.
+**Auditor:** Fabián Rubio + Claude
+
+### Qué se hizo
+
+| # | Mejora | Estado | Verificación |
+|---|--------|--------|--------------|
+| 1.5.1 | **Reconexión sin huecos**: re-snapshot en cada (re)conexión | ✅ | lint/test/build |
+| 1.5.2 | **Latencia evento→pantalla**: P50/P95 en el dashboard + OTel en worker (histograma + contadores) | ✅ | processed=17.850, histograma poblado |
+| 1.5.3 | **Push endurecido**: await + coalescencia server-side 50 ms + backpressure (canal acotado) | ✅ | 7.800 ev → 21 mensajes / 1.680 deltas |
+| 1.5.4 | **Auth de ingesta**: token `X-Ingest-Token` + rate limiting (429) | ✅ | sin token 401 · con token 202 |
+| 1.5.5 | **Carga k6 + consumidores en paralelo** (worker) | ✅ harness; ⚠️ ver hallazgo | ver abajo |
+
+### 🔴 Hallazgo de la prueba de carga (el más importante)
+
+**Objetivo:** sostener 5.000 ev/seg. **Resultado contra LocalStack:** NO se alcanza.
+- `/ingest` colapsa bajo concurrencia (300 VUs): `http_req_duration` avg **14 s**, p95 **34 s**,
+  ~**13 req/s** efectivos, 938 iteraciones descartadas (techo ~1.000–1.300 ev/s).
+- **Cola SQS = 0** y el worker (2 consumidores) drenó todo → **el consumo NO es el cuello
+  de botella**.
+- **Causa raíz:** la API hace un **`PublishAsync` a SNS por request y lo espera**; contra
+  **LocalStack** ese publish serializa y es lento, así que los requests se encolan.
+
+**Lecturas / remedios (orden de impacto):**
+1. **LocalStack no representa el throughput real** de SNS/SQS — es una herramienta de dev.
+   La cifra de 5.000 ev/s debe medirse contra AWS real (o un stub de alto rendimiento).
+2. **Desacoplar el publish del request**: `/ingest` encola en un buffer local y responde
+   202 al instante; un publicador en segundo plano hace **batch** a SNS (`PublishBatch`) o
+   **SQS `SendMessageBatch`**. Baja la latencia de `/ingest` drásticamente.
+3. **Ingesta serverless** (SAD §4.1): API Gateway + Lambda, o **Kinesis Data Firehose**
+   para volúmenes muy altos, en vez de una API monolítica publicando 1 a 1.
+4. El **simulador (Node, `setInterval`)** tampoco es un generador fiable a 5k; k6 es mejor,
+   pero el límite aquí fue el servidor, no el generador.
+
+### Conclusión
+
+Las cuatro mejoras de correctitud/seguridad/observabilidad quedaron hechas y verificadas.
+La quinta entregó su verdadero valor: **una medición honesta que revela el techo real**
+(~1k ev/s contra LocalStack) y señala dónde está (publish síncrono a SNS), no en el
+consumo. Esto es exactamente la clase de dificultad que aparece "en la realidad" y queda
+documentada con remedios concretos.
+
+**Veredicto:** ✅ Fase 1.5 completa. La meta de 5.000 ev/s pasa a depender de (2)/(3) y de
+medir contra AWS real — registrado como deuda priorizada.
+
+---
+
 ## AUD-008 — Revisión crítica de Fases 0–1: brechas con producción y mejoras (2026-06-22)
 
 **Tipo:** Auditoría retrospectiva (no de ejecución). Mira lo construido con ojo crítico:

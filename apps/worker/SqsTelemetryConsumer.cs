@@ -8,10 +8,10 @@ using Atalaya.Realtime;
 namespace Atalaya.Worker;
 
 /// <summary>
-/// Consumidor del camino caliente (ADR-008): long-polling de SQS por lotes; cada mensaje
-/// es un lote de telemetría (array JSON publicado por la API vía SNS). Tras procesar el
-/// ciclo, hace upsert del read model en Postgres (ADR-005) y borra los mensajes
-/// (at-least-once → tras 5 fallos van a la DLQ por la redrive policy).
+/// Consumidor del camino caliente (ADR-008). Arranca N bucles de long-polling en paralelo
+/// (competing consumers) sobre la misma cola para sostener mayor throughput. Cada lote:
+/// dedup (ADR-006) → upsert read model (ADR-005) → push de deltas (ADR-002), con métricas
+/// OTel. Borra los mensajes tras procesar (at-least-once → DLQ tras 5 fallos por redrive).
 /// </summary>
 public sealed class SqsTelemetryConsumer(
     IAmazonSQS sqs,
@@ -29,22 +29,39 @@ public sealed class SqsTelemetryConsumer(
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var queueUrl = (await sqs.GetQueueUrlAsync(options.QueueName, stoppingToken)).QueueUrl;
-        logger.LogInformation("Consumiendo SQS: {Queue}", queueUrl);
+        var consumers = Math.Max(1, options.Consumers);
+        logger.LogInformation("Consumiendo SQS {Queue} con {N} consumidores", queueUrl, consumers);
 
-        while (!stoppingToken.IsCancellationRequested)
+        var loops = Enumerable.Range(0, consumers)
+            .Select(i => ConsumeLoopAsync(queueUrl, i, stoppingToken));
+        await Task.WhenAll(loops);
+    }
+
+    private async Task ConsumeLoopAsync(string queueUrl, int id, CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
         {
-            var resp = await sqs.ReceiveMessageAsync(new ReceiveMessageRequest
+            ReceiveMessageResponse resp;
+            try
             {
-                QueueUrl = queueUrl,
-                MaxNumberOfMessages = 10,
-                WaitTimeSeconds = 20, // long polling
-            }, stoppingToken);
+                resp = await sqs.ReceiveMessageAsync(new ReceiveMessageRequest
+                {
+                    QueueUrl = queueUrl,
+                    MaxNumberOfMessages = 10,
+                    WaitTimeSeconds = 20, // long polling
+                }, ct);
+            }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Consumidor {Id}: error recibiendo; reintenta", id);
+                continue;
+            }
 
             if (resp.Messages is not { Count: > 0 }) continue;
 
             var events = new List<TelemetryEvent>(resp.Messages.Count * 64);
             var handled = new List<DeleteMessageBatchRequestEntry>(resp.Messages.Count);
-
             foreach (var msg in resp.Messages)
             {
                 try
@@ -55,36 +72,30 @@ public sealed class SqsTelemetryConsumer(
                 }
                 catch (Exception ex)
                 {
-                    // No se borra: SQS lo reentrega y, tras maxReceiveCount, va a la DLQ.
                     logger.LogError(ex, "Mensaje inválido; se reintentará");
                 }
             }
 
             // Dedup idempotente (ADR-006): descarta lo ya visto antes de aplicar efectos.
-            var fresh = await deduplicator.FilterNewAsync(events, stoppingToken);
+            var fresh = await deduplicator.FilterNewAsync(events, ct);
             var dups = events.Count - fresh.Count;
-            _duplicates += dups;
-            metrics.AddDuplicates(dups);
+            if (dups > 0) { Interlocked.Add(ref _duplicates, dups); metrics.AddDuplicates(dups); }
 
             if (fresh.Count > 0)
             {
                 var now = DateTimeOffset.UtcNow;
                 foreach (var e in fresh)
-                    metrics.RecordLatency((now - e.Ts).TotalMilliseconds); // latencia evento→procesado
+                    metrics.RecordLatency((now - e.Ts).TotalMilliseconds);
 
                 var deltas = fresh.Select(DeviceState.FromEvent).ToList();
-                await repository.UpsertAsync(deltas, stoppingToken);
-                await broadcaster.PublishDeltasAsync(deltas, stoppingToken); // push en vivo (ADR-002)
-                _processed += fresh.Count;
+                await repository.UpsertAsync(deltas, ct);
+                await broadcaster.PublishDeltasAsync(deltas, ct);
+                Interlocked.Add(ref _processed, fresh.Count);
                 metrics.AddProcessed(fresh.Count);
             }
 
             if (handled.Count > 0)
-                await sqs.DeleteMessageBatchAsync(queueUrl, handled, stoppingToken);
-
-            logger.LogInformation(
-                "Read model (acumulado): aplicados={Applied} duplicados={Dups}",
-                _processed, _duplicates);
+                await sqs.DeleteMessageBatchAsync(queueUrl, handled, ct);
         }
     }
 }

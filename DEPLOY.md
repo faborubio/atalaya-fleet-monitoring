@@ -76,6 +76,19 @@ Flujo: `/ingest → SNS → SQS → worker → dedup → Postgres → Redis → 
 Seguridad: `/ingest` valida `X-Ingest-Token` (config `Ingest:Token`) y aplica rate limiting
 (`Ingest:RatePerSecond`, 429 al exceder).
 
+### 1.6 Prueba de carga (k6 vía Docker)
+
+```bash
+# La API debe estar arriba (modo Aws). k6 corre en contenedor y apunta al host.
+Get-Content infra/load/ingest.js | docker run --rm -i `
+  -e INGEST_URL=http://host.docker.internal:3000/ingest `
+  -e INGEST_TOKEN=dev-ingest-token grafana/k6 run -
+```
+> **Hallazgo (AUD-009):** contra **LocalStack** el techo es ~1.000–1.300 ev/s — el cuello
+> de botella es el `PublishAsync` síncrono a SNS por request (la cola SQS queda en 0; el
+> worker con `Aws:Consumers` en paralelo sí drena). Para acercarse a 5.000 ev/s: desacoplar
+> el publish (batch en segundo plano) y/o medir contra AWS real.
+
 > **Transporte.** `Telemetry:Transport` = `Aws` en Development (pipeline real) o `InMemory`
 > (procesa en la API, sin Docker; lo usan los tests). Las interfaces
 > `ITelemetryPublisher`/`IDeviceStateRepository`/`IEventDeduplicator`/`ITelemetryBroadcaster`

@@ -10,8 +10,8 @@ que estresar.
 
 | | |
 |---|---|
-| **Versión** | 0.1.0 |
-| **Estado** | 🟢 Fase 1 completa — camino caliente sobre infraestructura real |
+| **Versión** | 0.1.1 |
+| **Estado** | 🟢 Fases 1 + 1.5 completas — camino caliente sobre infra real + endurecimiento |
 | **Autor** | Fabián Rubio — Full Stack (foco Frontend / Angular) |
 | **Repositorio** | https://github.com/faborubio/atalaya-fleet-monitoring |
 | **Documento rector** | [SAD-Atalaya.md](./SAD-Atalaya.md) |
@@ -158,8 +158,9 @@ Más detalle (modos, endpoints, rollback) en [DEPLOY.md](./DEPLOY.md).
 |---|---|---|
 | **0 — Cimientos** | Monorepo Nx, esqueleto Angular + .NET, simulador, CI | ✅ |
 | **1 — Camino caliente** | Ingesta → SNS/SQS → worker → dedup(Redis) → Postgres → SignalR → dashboard | ✅ Sobre infra real, verificado E2E |
+| **1.5 — Endurecimiento** | Reconexión sin huecos, latencia OTel + P95, push endurecido, auth de ingesta, carga k6 | ✅ Hecho ([AUD-009](./AUDIT.md)); ⚠️ ingesta topa ~1k ev/s vs LocalStack (bottleneck documentado) |
 | **2 — Alertas + camino frío** | Reglas + read model de alertas, S3 data lake, telemetría particionada, histórico | ⬜ Pendiente |
-| **3 — Endurecimiento** | DLQ/replay, OTel, carga 5k ev/s, seguridad, backplane SignalR nativo, CDK | ⬜ Pendiente |
+| **3 — Endurecimiento avanzado** | DLQ/replay, ingesta serverless a 5k ev/s, backplane SignalR nativo, CDK, seguridad OIDC | ⬜ Pendiente |
 
 Cada fase entrega algo demostrable y medido. Ver detalle en el
 [SAD §13](./SAD-Atalaya.md#13-roadmap-por-fases).

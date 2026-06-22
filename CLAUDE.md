@@ -39,7 +39,7 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
 
 | Archivo | Para qué |
 |---|---|
-| [SAD-Atalaya.md](./SAD-Atalaya.md) | Arquitectura rectora (ADR-001…010, NFRs, roadmap) |
+| [SAD-Atalaya.md](./SAD-Atalaya.md) | Arquitectura rectora (ADR-001…011, NFRs, roadmap) |
 | [README.md](./README.md) | Visión, stack, estructura, cómo empezar |
 | [AUDIT.md](./AUDIT.md) | Bitácora de auditorías por fase/cambio |
 | [DEPLOY.md](./DEPLOY.md) | Despliegue local (LocalStack) y AWS (CDK) |
@@ -48,60 +48,64 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
 
 ## 5. Estado actual
 
-**Fecha de actualización:** 2026-06-21
-**Fase:** 0 — Cimientos (en curso)
+**Fecha de actualización:** 2026-06-22
+**Fase:** 1 + 1.5 completas (camino caliente sobre infra real + endurecimiento). Próximo: Fase 2.
 
 ### Hecho
-- ✅ SAD v1.0.0 aprobado y leído.
-- ✅ Documentos base creados (README, AUDIT, DEPLOY, TROUBLESHOOTING, CLAUDE).
-- ✅ `git init` + `.gitignore` + commits.
-- ✅ **Monorepo Nx 21.6.11** (Angular 20.3, RxJS 7.8, TS 5.9). Se fijó Nx 21 por
-  incompatibilidad de Nx 23 con Angular ([TS-003](./TROUBLESHOOTING.md#ts-003--nx-23-incompatible-con-angular-ts-solution-setup)).
-- ✅ App `atalaya-web`: shell + 4 rutas lazy (mapa/dispositivos/alertas/históricos), `OnPush`.
-  Build 71 KB transfer, lint y tests verdes.
-- ✅ App `simulator` (Node): generador de carga de telemetría (modelo SAD §6), ~1800 ev/s en seco.
-- ✅ **.NET SDK 8.0.422** instalado ([TS-001](./TROUBLESHOOTING.md#ts-001--no-hay-net-sdk-solo-runtime) resuelto).
-- ✅ **Backend .NET** (`Atalaya.sln`): `libs/contracts` + `apps/api` (Minimal API + SignalR +
-  ingesta/dedup/read model en memoria) + `apps/worker` (esqueleto) + `apps/api.tests`.
-  Camino caliente verificado E2E con el simulador. Integrado en Nx (6 proyectos).
-- ✅ **Frontend conectado al hub** (Fase 1 completa, modo dev): `TelemetryStreamService`
-  (SignalR + reconexión) → `FleetStore` (firehose fuera de NgRx, coalescencia 100ms, ADR-003/010)
-  → dashboard con mapa en vivo (canvas) + tabla de dispositivos. Lazo E2E verificado (4.050 ev, 0 pérdida).
-- ✅ Auditorías [AUD-001](./AUDIT.md), [AUD-002](./AUDIT.md), [AUD-003](./AUDIT.md) y [AUD-004](./AUDIT.md#aud-004--frontend-conectado-al-hub-camino-caliente-completo-2026-06-21).
+- ✅ SAD v1.0.1 (ADR-001…011) + docs base. Repo en GitHub (12+ commits).
+- ✅ **Monorepo Nx 21.6.11** (Angular 20.3, RxJS 7.8, TS 5.9). Nx 21 fijado por incompat. Nx 23
+  ([TS-003](./TROUBLESHOOTING.md#ts-003--nx-23-incompatible-con-angular-ts-solution-setup)).
+- ✅ **Fase 0**: `atalaya-web` (shell + 4 rutas lazy, OnPush), `simulator` (Node), CI.
+- ✅ **Backend .NET 8** (`Atalaya.sln`): `libs/contracts`, `apps/api` (Minimal API + SignalR),
+  `apps/worker`, `apps/api.tests`. **.NET SDK 8.0.422** ([TS-001](./TROUBLESHOOTING.md#ts-001--no-hay-net-sdk-solo-runtime)).
+- ✅ **Infra Docker**: LocalStack 3.7 (SNS/SQS/S3) + Redis + Postgres ([AUD-005](./AUDIT.md)).
+- ✅ **Fase 1 — pipeline REAL cableado** ([AUD-006](./AUDIT.md)): `/ingest`→SNS→SQS→worker→
+  dedup(Redis)→Postgres(read model)→Redis pub/sub→API(`RedisDeltaForwarder`)→SignalR→dashboard.
+  Verificado E2E (4.680 ev, 0 pérdida).
+- ✅ **Frontend en vivo** ([AUD-004](./AUDIT.md)) + **zoneless** ([AUD-007](./AUDIT.md), ADR-010):
+  `FleetStore` (firehose fuera de NgRx, coalescencia 100ms, signals), mapa canvas + tabla.
+- ✅ **Revisión crítica** ([AUD-008](./AUDIT.md)) → **Fase 1.5 endurecimiento** ([AUD-009](./AUDIT.md)):
+  reconexión sin huecos · latencia P95 en dashboard + **OTel** en worker · push endurecido
+  (await + coalescencia server-side + backpressure) · **auth de ingesta** (token + rate limit) ·
+  **carga k6** + consumidores SQS en paralelo.
+
+### 🔴 Hallazgo abierto más importante (AUD-009, prueba de carga)
+Contra **LocalStack** el `/ingest` topa ~**1.000–1.300 ev/s** (NFR pide 5.000): bajo concurrencia
+la latencia explota (p95 34s). **La cola SQS queda en 0 y el worker drena** → el cuello es el
+**`PublishAsync` síncrono a SNS por request**, no el consumo. Remedios (orden de impacto):
+1) desacoplar el publish (`/ingest` encola y responde 202; publicador en background hace *batch*
+a SNS); 2) ingesta serverless (API GW+Lambda / Kinesis); 3) medir contra AWS real (LocalStack
+no representa throughput).
 
 ### Decisiones de implementación a recordar
-- El procesamiento del camino caliente vive **en la API** (modo dev sin Docker). Objetivo:
-  moverlo al `worker` sobre **SQS** (ADR-008). Aislado tras `ITelemetryBus`/`IDeduplicator`/`IDeviceStateStore`.
-- Dedup y read model **en memoria** → objetivo Redis + SQL.
+- **Flag `Telemetry:Transport`**: `Aws` en Development (pipeline real, requiere Docker arriba);
+  `InMemory` en base/tests (procesa en la API, sin Docker). Tests fuerzan InMemory.
+- **Auth ingesta**: header `X-Ingest-Token`; en Development el token es `dev-ingest-token`
+  (config `Ingest:Token`); el simulador lo manda con `--token`. Vacío en base = sin auth.
 - API en **puerto 3000** (`apps/api/Properties/launchSettings.json`, perfil `http`).
-- `nuget.config` versionado en la raíz (la máquina no tenía fuentes NuGet, [TS-004](./TROUBLESHOOTING.md#ts-004--dotnet-no-resuelve-paquetes-nuget-sin-fuentes)).
+- Worker: `Aws:Consumers` (consumidores SQS en paralelo). OTel exporta a consola en dev (10s).
+- Interfaces de extensión (para swaps sin reescribir): `ITelemetryPublisher`,
+  `IDeviceStateRepository`, `IEventDeduplicator`, `ITelemetryBroadcaster`.
+- `nuget.config` en la raíz ([TS-004](./TROUBLESHOOTING.md#ts-004--dotnet-no-resuelve-paquetes-nuget-sin-fuentes)).
 
-### Comandos útiles
-- `npm start` → sirve `atalaya-web` (http://localhost:4200)
-- `nx serve api` → API .NET (http://localhost:3000)
-- `node dist/apps/simulator/main.js --rate 1000 --devices 50 --duration 5 --url http://localhost:3000/ingest` → ingesta real
-- `npx nx run-many -t build` · `nx test api-tests` · `npx nx run-many -t lint test` → verificación
+### Cómo levantar todo (pipeline real)
+```
+docker compose -f infra/docker-compose.yml up -d     # infra (healthy)
+npx nx serve api        # API :3000 (modo Aws)
+npx nx serve worker     # consumidores SQS
+npm start               # dashboard :4200
+npx nx build simulator
+node dist/apps/simulator/main.js --rate 2000 --devices 100 --duration 30 --url http://localhost:3000/ingest --token dev-ingest-token
+```
+Verificación: `npx nx run-many -t build` · `nx test api-tests` · `npx nx run-many -t lint test`.
+Carga: ver [DEPLOY.md §1.6](./DEPLOY.md) (k6 vía Docker).
 
-### Infra local (Docker) — ✅ operativa
-- `docker compose -f infra/docker-compose.yml up -d` → LocalStack (SNS/SQS/S3) + Redis + Postgres (healthy).
-- Recursos: SNS `atalaya-telemetry`, SQS `atalaya-telemetry-queue`+`-dlq`, S3 `atalaya-datalake`.
-- LocalStack fijado a **3.7** (community; `latest` exige token pro — TS-007).
-
-### Pipeline real cableado (Fase 1 completa, [AUD-006](./AUDIT.md#aud-006--cableado-del-pipeline-real-snssqs--redis--postgres--signalr-2026-06-22))
-`/ingest` → **SNS** → **SQS** → worker → **dedup Redis** → **Postgres** (read model) →
-**Redis pub/sub** → API (`RedisDeltaForwarder`) → **SignalR** → dashboard. Verificado E2E
-(4.680 ev, 0 pérdida). Flag `Telemetry:Transport` (InMemory|Aws): Development=Aws; tests=InMemory.
-- Libs: `libs/persistence` (Dapper/Npgsql), `libs/realtime` (Redis dedup + broadcaster).
-- Interfaces de extensión: `ITelemetryPublisher`, `IDeviceStateRepository`, `IEventDeduplicator`, `ITelemetryBroadcaster`.
-
-### Pendiente
-- **Backlog crítico (revisión [AUD-008](./AUDIT.md#aud-008--revisión-crítica-de-fases-01-brechas-con-producción-y-mejoras-2026-06-22)):**
-  medir latencia evento→pantalla (OTel), reconexión sin huecos (ADR-006), grupos SignalR por
-  viewport + backplane nativo, prueba de carga k6 a 5k ev/s, auth de ingesta. Considerar **Fase 1.5** de endurecimiento.
-- **Fase 2**: S3 data lake + tabla `telemetry` particionada (ADR-007); alertas por umbral.
-- Productivizar: infra con **CDK** (ADR-009).
-- Para correr el pipeline: `docker compose -f infra/docker-compose.yml up -d`, luego
-  `nx serve api` + `nx serve worker` + `npm start` + simulador con `--url`.
+### Pendiente (próxima sesión)
+- **Resolver el cuello de botella de ingesta** (remedio #1: desacoplar publish a SNS con batch). ← alto valor.
+- **Fase 2**: alertas por umbral + read model de alertas; **S3 data lake** + tabla `telemetry`
+  particionada (ADR-007); vistas históricas (camino frío).
+- Productivizar: infra con **CDK** (ADR-009); backplane nativo de SignalR + grupos por viewport
+  (documentado en AUD-008 como opción, sin urgencia para flota completa).
 
 ### Toolchain verificado (2026-06-21)
 - ✅ git 2.51 · Node v24.15 · npm 11.14 · Nx 21.6.11 · **.NET SDK 8.0.422** · **Docker 29.5.3**
@@ -115,18 +119,18 @@ atalaya/
 ├─ apps/
 │  ├─ atalaya-web/   # SPA Angular (shell + features lazy)
 │  ├─ simulator/     # generador de carga de telemetría (Node)
-│  ├─ api/           # .NET Minimal API + SignalR + camino caliente en memoria
-│  ├─ worker/        # .NET Worker Service (esqueleto, consumo SQS pendiente)
-│  └─ api.tests/     # xUnit, test de integración del camino caliente
+│  ├─ api/           # .NET Minimal API + SignalR + ingesta(SNS) + forwarder Redis→SignalR + auth
+│  ├─ worker/        # .NET Worker: consume SQS (N consumidores) → dedup → Postgres → publica deltas; OTel
+│  └─ api.tests/     # xUnit, test de integración del camino caliente (InMemory)
 ├─ libs/contracts/   # DTOs .NET compartidos (TelemetryEvent, DeviceState)
 ├─ libs/persistence/ # read model en Postgres (Dapper/Npgsql)
 ├─ libs/realtime/    # Redis: dedup (ADR-006) + broadcaster pub/sub (ADR-002)
-├─ infra/            # docker-compose: LocalStack + Redis + Postgres
+├─ infra/            # docker-compose (LocalStack+Redis+Postgres) + load/ingest.js (k6)
 ├─ Atalaya.sln, nuget.config
 ├─ *.md              # SAD, README, AUDIT, DEPLOY, TROUBLESHOOTING, CLAUDE
 └─ nx.json, package.json, tsconfig.base.json, eslint.config.mjs
 ```
-Pendiente de crear (bloqueado por Docker): `infra/` (AWS CDK), wiring SQS/Redis/SQL.
+Pendiente de crear: infra como **AWS CDK** (ADR-009); S3 data lake + tabla `telemetry` (Fase 2).
 
 ## 6. Decisiones de arquitectura clave (resumen — el detalle está en el SAD)
 
@@ -141,16 +145,17 @@ Pendiente de crear (bloqueado por Docker): `infra/` (AWS CDK), wiring SQS/Redis/
 - **ADR-007:** SQL particionado por tiempo + S3 data lake (retención O(1) por drop de partición).
 - **ADR-008:** .NET Minimal API + Worker Services separados (escalan distinto).
 - **ADR-009:** IaC con AWS CDK + LocalStack en dev.
-- **ADR-010:** Frontend de alto rendimiento: OnPush + Signals + coalescencia por frame.
+- **ADR-010:** Frontend de alto rendimiento: OnPush + Signals + coalescencia (zoneless, hecho).
+- **ADR-011:** Implementación incremental con shims tras interfaces (flag `Telemetry:Transport`);
+  puente Redis pub/sub e `awslocal` como interinos del backplane SignalR y CDK.
 
-## 7. Próximos pasos sugeridos
+## 7. Próximos pasos sugeridos (para la nueva sesión)
 
-1. Inicializar git y primer commit con la documentación.
-2. Generar monorepo Nx + esqueleto Angular (standalone, routing lazy por feature) +
-   simulador de telemetría en Node.
-3. Cuando se instalen prerequisitos: scaffold backend .NET (TS-001) e infra CDK/LocalStack
-   (TS-002).
-4. Avanzar a **Fase 1 — camino caliente** (ingesta → cola → worker → SignalR → dashboard).
+1. **Leer este archivo + [AUD-008](./AUDIT.md) y [AUD-009](./AUDIT.md)** (backlog crítico y hallazgo de carga).
+2. **Desacoplar el publish a SNS** en `/ingest` (encolar + batch en background) para subir el
+   throughput de ingesta — es el cuello de botella medido.
+3. **Fase 2**: alertas por umbral + S3 data lake + telemetría particionada (ADR-007).
+4. Si se retoma la infra: pasar `awslocal` → **AWS CDK** (ADR-009).
 
 > Al cerrar cada sesión: actualiza §5 (estado), añade entrada en AUDIT.md si hubo cambio
 > auditable, y registra en TROUBLESHOOTING.md cualquier error resuelto.

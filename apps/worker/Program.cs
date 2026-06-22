@@ -1,6 +1,7 @@
 using Amazon.Runtime;
 using Amazon.SQS;
 using Atalaya.Persistence;
+using Atalaya.Realtime;
 using Atalaya.Worker;
 
 var builder = Host.CreateApplicationBuilder(args);
@@ -18,6 +19,7 @@ builder.Services.AddSingleton<IAmazonSQS>(_ =>
         }));
 
 builder.Services.AddAtalayaPersistence(builder.Configuration);
+builder.Services.AddAtalayaRedis(builder.Configuration);
 builder.Services.AddHostedService<SqsTelemetryConsumer>();
 
 var host = builder.Build();

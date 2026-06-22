@@ -3,6 +3,7 @@ using Amazon.SQS;
 using Amazon.SQS.Model;
 using Atalaya.Contracts;
 using Atalaya.Persistence;
+using Atalaya.Realtime;
 
 namespace Atalaya.Worker;
 
@@ -15,11 +16,13 @@ namespace Atalaya.Worker;
 public sealed class SqsTelemetryConsumer(
     IAmazonSQS sqs,
     AwsOptions options,
+    IEventDeduplicator deduplicator,
     IDeviceStateRepository repository,
     ILogger<SqsTelemetryConsumer> logger) : BackgroundService
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private long _processed;
+    private long _duplicates;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -37,7 +40,7 @@ public sealed class SqsTelemetryConsumer(
 
             if (resp.Messages is not { Count: > 0 }) continue;
 
-            var deltas = new List<DeviceState>(resp.Messages.Count * 64);
+            var events = new List<TelemetryEvent>(resp.Messages.Count * 64);
             var handled = new List<DeleteMessageBatchRequestEntry>(resp.Messages.Count);
 
             foreach (var msg in resp.Messages)
@@ -45,7 +48,7 @@ public sealed class SqsTelemetryConsumer(
                 try
                 {
                     var batch = JsonSerializer.Deserialize<TelemetryEvent[]>(msg.Body, Json) ?? [];
-                    foreach (var e in batch) deltas.Add(DeviceState.FromEvent(e));
+                    events.AddRange(batch);
                     handled.Add(new DeleteMessageBatchRequestEntry(msg.MessageId, msg.ReceiptHandle));
                 }
                 catch (Exception ex)
@@ -55,16 +58,23 @@ public sealed class SqsTelemetryConsumer(
                 }
             }
 
-            if (deltas.Count > 0)
+            // Dedup idempotente (ADR-006): descarta lo ya visto antes de aplicar efectos.
+            var fresh = await deduplicator.FilterNewAsync(events, stoppingToken);
+            _duplicates += events.Count - fresh.Count;
+
+            if (fresh.Count > 0)
             {
+                var deltas = fresh.Select(DeviceState.FromEvent).ToList();
                 await repository.UpsertAsync(deltas, stoppingToken);
-                _processed += deltas.Count;
+                _processed += fresh.Count;
             }
 
             if (handled.Count > 0)
                 await sqs.DeleteMessageBatchAsync(queueUrl, handled, stoppingToken);
 
-            logger.LogInformation("Eventos aplicados al read model (acumulado): {Count}", _processed);
+            logger.LogInformation(
+                "Read model (acumulado): aplicados={Applied} duplicados={Dups}",
+                _processed, _duplicates);
         }
     }
 }

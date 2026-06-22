@@ -68,10 +68,13 @@ docker compose -f infra/docker-compose.yml up -d   # LocalStack + Redis + Postgr
 npx nx serve api        # modo Aws (Development): publica a SNS, reenvía Redis→SignalR
 npx nx serve worker     # consume SQS → dedup(Redis) → Postgres → publica deltas a Redis
 npm start               # dashboard Angular en http://localhost:4200 (se conecta al hub)
-# inyectar carga:
-node dist/apps/simulator/main.js --rate 2000 --devices 100 --duration 30 --url http://localhost:3000/ingest
+# inyectar carga (modo Aws exige token de ingesta):
+node dist/apps/simulator/main.js --rate 2000 --devices 100 --duration 30 \
+  --url http://localhost:3000/ingest --token dev-ingest-token
 ```
 Flujo: `/ingest → SNS → SQS → worker → dedup → Postgres → Redis → API → SignalR → dashboard`.
+Seguridad: `/ingest` valida `X-Ingest-Token` (config `Ingest:Token`) y aplica rate limiting
+(`Ingest:RatePerSecond`, 429 al exceder).
 
 > **Transporte.** `Telemetry:Transport` = `Aws` en Development (pipeline real) o `InMemory`
 > (procesa en la API, sin Docker; lo usan los tests). Las interfaces

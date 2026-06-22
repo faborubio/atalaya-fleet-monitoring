@@ -15,6 +15,8 @@ async function main(): Promise<void> {
 
   const TICKS_PER_SEC = 10;
   const perTick = Math.max(1, Math.round(cfg.rate / TICKS_PER_SEC));
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  if (cfg.ingestToken) headers['x-ingest-token'] = cfg.ingestToken;
   const mode = cfg.ingestUrl ? `POST → ${cfg.ingestUrl}` : 'dry-run (solo consola)';
 
   console.log(
@@ -35,7 +37,7 @@ async function main(): Promise<void> {
     }
 
     if (cfg.ingestUrl) {
-      void ship(cfg.ingestUrl, batch).then((ok) => {
+      void ship(cfg.ingestUrl, headers, batch).then((ok) => {
         if (ok) sent += batch.length;
         else failed += batch.length;
       });
@@ -75,11 +77,15 @@ async function main(): Promise<void> {
   process.on('SIGTERM', stop);
 }
 
-async function ship(url: string, batch: TelemetryEvent[]): Promise<boolean> {
+async function ship(
+  url: string,
+  headers: Record<string, string>,
+  batch: TelemetryEvent[]
+): Promise<boolean> {
   try {
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers,
       body: JSON.stringify(batch),
     });
     return res.ok;

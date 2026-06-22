@@ -20,6 +20,7 @@ export function readConfig(argv: string[]): SimulatorConfig {
     devices: Math.max(1, num('devices', 'SIM_DEVICES', 200)),
     durationSec: num('duration', 'SIM_DURATION', 0),
     ingestUrl: (flags['url'] ?? process.env['INGEST_URL'] ?? '').trim(),
+    ingestToken: (flags['token'] ?? process.env['INGEST_TOKEN'] ?? '').trim(),
   };
 }
 

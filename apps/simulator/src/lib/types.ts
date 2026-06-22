@@ -27,4 +27,6 @@ export interface SimulatorConfig {
   durationSec: number;
   /** Endpoint de ingesta. Si está vacío, corre en seco (solo métricas en consola). */
   ingestUrl: string;
+  /** Token de ingesta (header X-Ingest-Token). Vacío = no se envía. */
+  ingestToken: string;
 }

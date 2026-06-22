@@ -126,8 +126,11 @@ Luego inyecta carga y observa el dashboard moverse en vivo:
 
 ```bash
 npx nx build simulator
-node dist/apps/simulator/main.js --rate 2000 --devices 100 --duration 30 --url http://localhost:3000/ingest
+node dist/apps/simulator/main.js --rate 2000 --devices 100 --duration 30 \
+  --url http://localhost:3000/ingest --token dev-ingest-token
 ```
+> En modo Aws `/ingest` exige el header `X-Ingest-Token` (auth de ingesta). El simulador lo
+> envía con `--token`. En modo InMemory no hay token (config base vacía).
 
 ### Sin Docker (camino rápido)
 

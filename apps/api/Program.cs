@@ -1,3 +1,4 @@
+using System.Threading.RateLimiting;
 using Amazon.Runtime;
 using Amazon.SimpleNotificationService;
 using Atalaya.Api.Hubs;
@@ -6,10 +7,25 @@ using Atalaya.Api.Services;
 using Atalaya.Contracts;
 using Atalaya.Persistence;
 using Atalaya.Realtime;
+using Microsoft.AspNetCore.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddSignalR();
+
+// Seguridad de ingesta (SAD §8): token de dispositivo + rate limiting.
+var ingestToken = builder.Configuration["Ingest:Token"] ?? string.Empty;
+var ingestRatePerSecond = builder.Configuration.GetValue("Ingest:RatePerSecond", 500);
+builder.Services.AddRateLimiter(o =>
+{
+    o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    o.AddFixedWindowLimiter("ingest", opt =>
+    {
+        opt.PermitLimit = ingestRatePerSecond;
+        opt.Window = TimeSpan.FromSeconds(1);
+        opt.QueueLimit = 0;
+    });
+});
 
 // Transporte de ingesta: "InMemory" (tests / dev sin Docker) o "Aws" (SNS→SQS, ADR-001).
 var transport = builder.Configuration["Telemetry:Transport"] ?? "InMemory";
@@ -57,15 +73,22 @@ if (useAws)
     await app.Services.GetRequiredService<IDeviceStateRepository>().EnsureSchemaAsync();
 
 app.UseCors(DevCors);
+app.UseRateLimiter();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok", transport, ts = DateTimeOffset.UtcNow }));
 
 // Ingesta: NO escribe directo a la base. Publica para procesamiento async y responde 202 (ADR-001).
-app.MapPost("/ingest", async (TelemetryEvent[] events, ITelemetryPublisher publisher, CancellationToken ct) =>
+// Autenticación por token de dispositivo (si está configurado) + rate limiting (ADR §8).
+app.MapPost("/ingest", async (
+    HttpContext http, TelemetryEvent[] events, ITelemetryPublisher publisher, CancellationToken ct) =>
 {
+    if (!string.IsNullOrEmpty(ingestToken) &&
+        http.Request.Headers["X-Ingest-Token"] != ingestToken)
+        return Results.Unauthorized();
+
     await publisher.PublishAsync(events, ct);
     return Results.Accepted();
-});
+}).RequireRateLimiting("ingest");
 
 // Snapshot del read model: lo que el dashboard pide al cargar (camino caliente, ADR-005).
 if (useAws)

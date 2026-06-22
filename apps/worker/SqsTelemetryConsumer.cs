@@ -19,6 +19,7 @@ public sealed class SqsTelemetryConsumer(
     IEventDeduplicator deduplicator,
     IDeviceStateRepository repository,
     ITelemetryBroadcaster broadcaster,
+    WorkerMetrics metrics,
     ILogger<SqsTelemetryConsumer> logger) : BackgroundService
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -61,14 +62,21 @@ public sealed class SqsTelemetryConsumer(
 
             // Dedup idempotente (ADR-006): descarta lo ya visto antes de aplicar efectos.
             var fresh = await deduplicator.FilterNewAsync(events, stoppingToken);
-            _duplicates += events.Count - fresh.Count;
+            var dups = events.Count - fresh.Count;
+            _duplicates += dups;
+            metrics.AddDuplicates(dups);
 
             if (fresh.Count > 0)
             {
+                var now = DateTimeOffset.UtcNow;
+                foreach (var e in fresh)
+                    metrics.RecordLatency((now - e.Ts).TotalMilliseconds); // latencia evento→procesado
+
                 var deltas = fresh.Select(DeviceState.FromEvent).ToList();
                 await repository.UpsertAsync(deltas, stoppingToken);
                 await broadcaster.PublishDeltasAsync(deltas, stoppingToken); // push en vivo (ADR-002)
                 _processed += fresh.Count;
+                metrics.AddProcessed(fresh.Count);
             }
 
             if (handled.Count > 0)

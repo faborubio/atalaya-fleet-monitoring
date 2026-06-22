@@ -26,6 +26,10 @@ import { DeviceState } from '../../core/models/device-state';
             <span class="stat__val">{{ fleet.eventsPerSec() }}</span>
             <span class="stat__lbl">eventos/seg</span>
           </div>
+          <div class="stat" [class.is-warn]="fleet.latencyP95() > 1500">
+            <span class="stat__val">{{ fleet.latencyP95() }}<small>ms</small></span>
+            <span class="stat__lbl">latencia P95 (NFR &lt; 1500)</span>
+          </div>
           <div class="stat" [class.is-live]="fleet.live()">
             <span class="stat__val">{{ fleet.live() ? '●' : '○' }}</span>
             <span class="stat__lbl">{{ fleet.live() ? 'en vivo' : 'sin conexión' }}</span>

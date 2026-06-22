@@ -63,4 +63,14 @@
   &.is-live .stat__val {
     color: #3fb950;
   }
+
+  &.is-warn .stat__val {
+    color: #f85149;
+  }
+
+  small {
+    font-size: 0.6em;
+    color: #9da7b3;
+    margin-left: 2px;
+  }
 }

@@ -36,8 +36,13 @@ export class FleetStore {
 
   /** Snapshot actual de la flota (read model en cliente). */
   readonly devices = signal<DeviceState[]>([]);
-  /** Throughput aplicado (eventos/seg) — la métrica estrella del SAD. */
+  /** Throughput aplicado (eventos/seg). */
   readonly eventsPerSec = signal(0);
+  /** Latencia evento→pantalla del último segundo (NFR estrella del SAD §2/§9), en ms. */
+  readonly latencyP50 = signal(0);
+  readonly latencyP95 = signal(0);
+
+  private latencies: number[] = [];
 
   readonly count = computed(() => this.devices().length);
   readonly status = this.stream.status;
@@ -66,6 +71,9 @@ export class FleetStore {
     const tick = setInterval(() => {
       this.eventsPerSec.set(this.appliedThisSecond);
       this.appliedThisSecond = 0;
+      this.latencyP50.set(percentile(this.latencies, 50));
+      this.latencyP95.set(percentile(this.latencies, 95));
+      this.latencies = [];
     }, 1000);
     this.destroyRef.onDestroy(() => clearInterval(tick));
 
@@ -87,11 +95,13 @@ export class FleetStore {
 
   private applyWindows(windows: DeviceState[][]): void {
     let applied = 0;
+    const now = Date.now();
     for (const batch of windows) {
       for (const d of batch) {
         const current = this.byId.get(d.deviceId);
         if (!current || d.seq >= current.seq) {
           this.byId.set(d.deviceId, d);
+          this.latencies.push(now - Date.parse(d.ts)); // evento→aplicación en cliente
           applied++;
         }
       }
@@ -100,4 +110,12 @@ export class FleetStore {
     // Un único set por ventana ⇒ una sola pasada de change detection (OnPush).
     this.devices.set([...this.byId.values()]);
   }
+}
+
+/** Percentil simple (p en 0..100) sobre una muestra; 0 si está vacía. */
+function percentile(samples: number[], p: number): number {
+  if (samples.length === 0) return 0;
+  const sorted = [...samples].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length));
+  return Math.round(sorted[idx]);
 }

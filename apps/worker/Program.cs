@@ -3,8 +3,16 @@ using Amazon.SQS;
 using Atalaya.Persistence;
 using Atalaya.Realtime;
 using Atalaya.Worker;
+using OpenTelemetry.Metrics;
 
 var builder = Host.CreateApplicationBuilder(args);
+
+// Observabilidad (SAD §8): métricas OTel. Dev → consola; prod → OTLP a un colector.
+builder.Services.AddSingleton<WorkerMetrics>();
+builder.Services.AddOpenTelemetry().WithMetrics(m => m
+    .AddMeter(WorkerMetrics.MeterName)
+    .AddConsoleExporter((_, reader) =>
+        reader.PeriodicExportingMetricReaderOptions.ExportIntervalMilliseconds = 10_000));
 
 var aws = builder.Configuration.GetSection("Aws").Get<AwsOptions>() ?? new AwsOptions();
 builder.Services.AddSingleton(aws);

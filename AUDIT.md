@@ -36,6 +36,45 @@ proyecto.
 
 ---
 
+## AUD-005 — Infraestructura de desarrollo en Docker (2026-06-21)
+
+**Fase:** Fase 1→2 (habilitación) — Infra local del pipeline event-driven
+**Alcance:** Instalación de Docker, reubicación de su almacén a D:, y `infra/` con
+LocalStack (SNS/SQS/S3) + Redis + Postgres vía docker-compose.
+**Auditor:** Fabián Rubio + Claude
+
+### Hallazgos
+
+| Sev | Hallazgo | Acción | Estado |
+|-----|----------|--------|--------|
+| ✅ | **Docker Desktop 29.5.3** instalado (WSL2 ya presente); desbloquea infra | — | Resuelto → [TS-002](./TROUBLESHOOTING.md#ts-002--docker-no-disponible) |
+| 🔴 | **C: a 0 bytes** → Docker en modo solo-lectura al pullear | Liberar C: + mover almacén Docker a D: (junction) | Resuelto → [TS-006](./TROUBLESHOOTING.md#ts-006--disco-c-lleno-0-bytes--docker-en-modo-solo-lectura) |
+| 🟠 | LocalStack `3.8` corrupto (`exec format error`) y `latest` exige token pro | Fijar `localstack/localstack:3.7` (community) | Resuelto → [TS-007](./TROUBLESHOOTING.md#ts-007--localstack-no-arranca-exec-format-error-y-luego-license-token) |
+| ✅ | `infra/docker-compose.yml`: LocalStack + Redis + Postgres, los 3 **healthy** | — | OK |
+| ✅ | Recursos creados por init: SNS `atalaya-telemetry`, SQS `...-queue`+`...-dlq` (redrive), S3 `atalaya-datalake`, suscripción SNS→SQS | — | OK |
+| ✅ | `.gitattributes` fuerza LF en `*.sh` (evita romper init en clones Windows) | — | OK |
+| 🔵 | Recursos provisionados con `awslocal`, no con CDK (ADR-009) | Migrar a AWS CDK más adelante | Abierto |
+
+### Verificaciones
+
+- [x] `docker compose ps` → localstack/redis/postgres **healthy**.
+- [x] `awslocal sqs list-queues` / `sns list-topics` / `s3 ls` → recursos presentes.
+- [x] Suscripción SNS→SQS con RawMessageDelivery.
+- [x] `pg_isready` OK · `redis-cli ping` → PONG.
+- [x] Almacén Docker en `D:\DockerData` (C: ya no se llena con imágenes).
+
+### Conclusión
+
+La infraestructura del pipeline corre en local de forma reproducible. El incidente de
+disco lleno se resolvió reubicando Docker a D: con un junction; LocalStack quedó fijado a
+una versión community íntegra. Con esto, el siguiente paso es **cablear los servicios .NET
+a la infra real**: ingesta → SNS/SQS, dedup en Redis, read models en Postgres y backplane
+SignalR — sustituyendo los shims en memoria a través de las interfaces ya aisladas.
+
+**Veredicto:** ✅ Infra de desarrollo operativa y verificada.
+
+---
+
 ## AUD-004 — Frontend conectado al hub: camino caliente completo (2026-06-21)
 
 **Fase:** Fase 1 — Camino caliente (lazo cerrado: simulador → API → SignalR → dashboard)

@@ -66,16 +66,20 @@ curl http://localhost:3000/api/devices   # read model device_state poblado
 > **SQS**; las interfaces `ITelemetryBus`/`IDeduplicator`/`IDeviceStateStore` permiten el
 > cambio sin reescribir la lógica.
 
-### 1.4 Infra local con LocalStack ⛔
+### 1.4 Infra local con LocalStack — ✅ disponible
 
 ```bash
-# Requiere Docker (ver TROUBLESHOOTING TS-002)
-docker compose up -d                 # LocalStack + Redis + PostgreSQL
-npx cdklocal bootstrap               # bootstrap CDK contra LocalStack
-npx cdklocal deploy                  # crea SNS/SQS/S3/... en local
+docker compose -f infra/docker-compose.yml up -d    # LocalStack (SNS/SQS/S3) + Redis + Postgres
+docker compose -f infra/docker-compose.yml ps       # los 3 deben estar healthy
 ```
+Recursos (SNS/SQS/DLQ/S3 + suscripción) los crea automáticamente
+`infra/localstack/init/01-resources.sh` al arrancar. Detalle en
+[infra/README.md](./infra/README.md).
 
-El objetivo (ADR-009) es que **un dev levante el pipeline completo sin AWS real**.
+> Endpoints dev: AWS `http://localhost:4566` · Redis `localhost:6379` ·
+> Postgres `localhost:5432` (atalaya/atalaya).
+> El objetivo (ADR-009) es definir estos recursos con **AWS CDK**; hoy se crean con
+> `awslocal` para tener el pipeline ya corriendo.
 
 ---
 

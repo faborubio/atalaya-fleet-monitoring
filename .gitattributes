@@ -1,0 +1,10 @@
+# Normalización de fin de línea.
+* text=auto
+
+# Scripts que corren en Linux/contenedores: SIEMPRE LF (un CRLF rompe el shebang/bash).
+*.sh text eol=lf
+
+# Scripts de Windows: CRLF.
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf

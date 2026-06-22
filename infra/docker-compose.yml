@@ -1,0 +1,59 @@
+# Infraestructura de desarrollo de Atalaya (ADR-009).
+# Reproduce el pipeline event-driven en local sin AWS real:
+#   - LocalStack: SNS (fan-out) + SQS (buffer + DLQ) + S3 (data lake)
+#   - Redis: set de deduplicación (ADR-006) + backplane de SignalR (ADR-002)
+#   - Postgres: read models + telemetría (ADR-005/007)
+#
+# Uso:  docker compose -f infra/docker-compose.yml up -d
+#       docker compose -f infra/docker-compose.yml down   (añade -v para borrar datos)
+
+name: atalaya-dev
+
+services:
+  localstack:
+    # 3.x = edición community (SNS/SQS/S3 gratis, sin token). Evitar 'latest':
+    # apunta a builds 2026.x que exigen LOCALSTACK_AUTH_TOKEN (pro).
+    image: localstack/localstack:3.7
+    ports:
+      - '4566:4566' # edge endpoint (todos los servicios AWS)
+    environment:
+      - SERVICES=sns,sqs,s3
+      - DEBUG=0
+      - AWS_DEFAULT_REGION=us-east-1
+    volumes:
+      - ./localstack/init:/etc/localstack/init/ready.d:ro
+    healthcheck:
+      test: ['CMD', 'awslocal', 'sqs', 'list-queues']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '6379:6379'
+    command: ['redis-server', '--save', '', '--appendonly', 'no']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - '5432:5432'
+    environment:
+      - POSTGRES_USER=atalaya
+      - POSTGRES_PASSWORD=atalaya
+      - POSTGRES_DB=atalaya
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U atalaya']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  pgdata:

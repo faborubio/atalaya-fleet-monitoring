@@ -65,7 +65,12 @@ Documentado como prerequisito en [DEPLOY.md §0](./DEPLOY.md#0-prerrequisitos). 
 
 ## TS-002 — Docker no disponible
 
-**Fecha:** 2026-06-21 · **Área:** infra · **Estado:** 🔴 Abierto (bloqueante)
+**Fecha:** 2026-06-21 · **Área:** infra · **Estado:** ✅ Resuelto (2026-06-21)
+
+**Resolución:** instalado **Docker Desktop** (`winget install Docker.DockerDesktop --silent`).
+La máquina ya tenía **WSL2** (Ubuntu-24.04, v2), que es el backend requerido. Verificado:
+Docker 29.5.3, Compose v5.1.4, `docker run hello-world` OK. Tras instalar hay que lanzar
+Docker Desktop una vez (aceptar el acuerdo) para que el daemon arranque.
 
 **Síntoma**
 ```
@@ -175,6 +180,69 @@ Fijar la versión 8.x: `dotnet add package Microsoft.AspNetCore.Mvc.Testing --ve
 **Prevención**
 Al añadir paquetes de ASP.NET Core a proyectos net8, fijar siempre `--version 8.0.x`
 (van alineados con el runtime).
+
+---
+
+## TS-006 — Disco C: lleno (0 bytes) → Docker en modo solo-lectura
+
+**Fecha:** 2026-06-21 · **Área:** infra/sistema · **Estado:** ✅ Resuelto
+
+**Síntoma**
+Al hacer `docker pull` de imágenes grandes (LocalStack):
+```
+failed to extract layer ...: read-only file system
+write /var/lib/desktop-containerd/.../meta.db: read-only file system
+```
+
+**Causa raíz**
+El disco **C: estaba a 0 bytes libres**. Docker (containerd, en la VM WSL2) se quedó sin
+espacio al extraer y entró en modo solo-lectura. La VM de datos de Docker vivía en C:.
+
+**Solución (dos partes)**
+1. **Liberar C:** Papelera + `%TEMP%` + `npm cache clean --force` (todo reversible).
+   ⚠️ No borrar `%TEMP%\claude` (lo usa el harness para la salida de comandos).
+2. **Mover los datos de Docker a D:** (51 GB libres). Con Docker Desktop **parado** y
+   `wsl --shutdown`:
+   - `wsl --manage docker-desktop --move "D:\DockerData"` (mueve la distro de sistema).
+   - El disco de datos (imágenes) es un vhdx aparte en
+     `%LOCALAPPDATA%\Docker\wsl\disk\docker_data.vhdx`. Se movió a `D:\DockerData\disk\`
+     y se dejó un **junction** en la ruta original:
+     `New-Item -ItemType Junction -Path <C:\...\wsl\disk> -Target D:\DockerData\disk`.
+   - Editar `DataFolder` en `%APPDATA%\Docker\settings-store.json` **no** mueve nada
+     (solo aplica desde la GUI); por eso el junction.
+
+**Prevención**
+Mantener el almacén de Docker en D:. Vigilar espacio en C: antes de pulls grandes.
+
+---
+
+## TS-007 — LocalStack no arranca: `exec format error` y luego license token
+
+**Fecha:** 2026-06-21 · **Área:** infra · **Estado:** ✅ Resuelto
+
+**Síntoma**
+- `localstack/localstack:3.8`: contenedor sale con `exec /usr/local/bin/docker-entrypoint.sh: exec format error`.
+- `localstack/localstack:latest`: sale con código 55, *"License activation failed! No credentials… set LOCALSTACK_AUTH_TOKEN"*.
+
+**Causa raíz**
+- El `exec format error` no era arquitectura (todo amd64): la **capa cacheada de 3.8
+  quedó corrupta** (entrypoint con 0 líneas/bytes basura), secuela del disco lleno
+  ([TS-006](#ts-006--disco-c-lleno-0-bytes--docker-en-modo-solo-lectura)). `docker pull`
+  no la re-bajaba ("up to date") porque el digest seguía en caché.
+- `latest` apunta a builds **2026.x de pago** que exigen token.
+
+**Solución**
+Usar una versión **3.x community** con digest distinto al corrupto: `localstack/localstack:3.7`
+(entrypoint íntegro, gratis). Verificar integridad antes de usar:
+```bash
+docker run --rm --entrypoint sh localstack/localstack:3.7 -c "wc -l /usr/local/bin/docker-entrypoint.sh"
+# debe dar ~39 líneas, no 0
+```
+
+**Prevención**
+Fijar LocalStack a una versión `3.x` concreta (nunca `latest`). Si una imagen da
+`exec format error` con arquitectura correcta, sospechar capa corrupta: re-pull forzado o
+cambiar de versión para obtener otro digest.
 
 ---
 

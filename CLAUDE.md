@@ -82,12 +82,21 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
 - `node dist/apps/simulator/main.js --rate 1000 --devices 50 --duration 5 --url http://localhost:3000/ingest` → ingesta real
 - `npx nx run-many -t build` · `nx test api-tests` · `npx nx run-many -t lint test` → verificación
 
-### Bloqueado (prerequisitos por instalar)
-- 🔴 **Infra CDK/LocalStack** + cola SQS real en el worker + Redis/SQL — falta **Docker Desktop** → [TS-002](./TROUBLESHOOTING.md#ts-002--docker-no-disponible).
+### Infra local (Docker) — ✅ operativa
+- `docker compose -f infra/docker-compose.yml up -d` → LocalStack (SNS/SQS/S3) + Redis + Postgres (healthy).
+- Recursos: SNS `atalaya-telemetry`, SQS `atalaya-telemetry-queue`+`-dlq`, S3 `atalaya-datalake`.
+- LocalStack fijado a **3.7** (community; `latest` exige token pro — TS-007).
+
+### Pendiente (próximo gran paso): cablear .NET a la infra real
+Sustituir los shims en memoria por la infra (a través de las interfaces ya aisladas):
+ingesta → **SNS/SQS** (worker consume), dedup en **Redis**, read model en **Postgres**,
+y **backplane Redis** para que el worker empuje por SignalR (ADR-008). CDK (ADR-009) después.
 
 ### Toolchain verificado (2026-06-21)
-- ✅ git 2.51 · Node v24.15 · npm 11.14 · Nx 21.6.11 · **.NET SDK 8.0.422**
-- 🔴 Docker: no instalado
+- ✅ git 2.51 · Node v24.15 · npm 11.14 · Nx 21.6.11 · **.NET SDK 8.0.422** · **Docker 29.5.3**
+- ⚠️ **Almacén de Docker movido a `D:\DockerData`** (C: se había llenado a 0 bytes, TS-006).
+  Hay un junction en `%LOCALAPPDATA%\Docker\wsl\disk` → `D:\DockerData\disk`. No lo borres.
+- ⚠️ Disco **C: muy justo**: vigilar espacio antes de pulls grandes.
 
 ### Estructura actual del repo
 ```

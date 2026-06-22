@@ -2,13 +2,23 @@ import {
   AfterViewInit,
   ChangeDetectionStrategy,
   Component,
+  DestroyRef,
   ElementRef,
+  computed,
   effect,
   inject,
+  signal,
   viewChild,
 } from '@angular/core';
 import { FleetStore } from '../../core/telemetry/fleet-store';
 import { DeviceState } from '../../core/models/device-state';
+
+interface Bounds {
+  minLat: number;
+  maxLat: number;
+  minLng: number;
+  maxLng: number;
+}
 
 @Component({
   selector: 'app-dashboard',
@@ -37,6 +47,27 @@ import { DeviceState } from '../../core/models/device-state';
         </div>
       </header>
 
+      <div class="dash__viewport">
+        <span class="dash__vp-lbl">Viewport (AUD-008):</span>
+        @for (z of zooms; track z.factor) {
+          <button
+            type="button"
+            class="dash__vp-btn"
+            [class.is-active]="zoom() === z.factor"
+            (click)="zoom.set(z.factor)"
+          >
+            {{ z.label }}
+          </button>
+        }
+        @if (visibleIds(); as v) {
+          <span class="dash__vp-info">
+            suscrito a {{ v.size }} de {{ fleet.count() }} — el resto se congela
+          </span>
+        } @else {
+          <span class="dash__vp-info">firehose (todos los dispositivos en vivo)</span>
+        }
+      </div>
+
       @if (fleet.count() === 0) {
         <p class="dash__hint">
           Esperando telemetría. Arranca la API (<code>nx serve api</code>) y el simulador
@@ -54,13 +85,68 @@ export class Dashboard implements AfterViewInit {
   private readonly canvasRef =
     viewChild.required<ElementRef<HTMLCanvasElement>>('canvas');
 
+  protected readonly zooms = [
+    { factor: 1, label: 'Todo' },
+    { factor: 2, label: '2×' },
+    { factor: 4, label: '4×' },
+  ] as const;
+
+  /** Factor de zoom del viewport: 1 = toda la flota (firehose); >1 = recorte central. */
+  protected readonly zoom = signal(1);
+
+  private readonly bounds = computed<Bounds | null>(() => {
+    const devices = this.fleet.devices();
+    if (devices.length === 0) return null;
+    let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+    for (const d of devices) {
+      minLat = Math.min(minLat, d.lat);
+      maxLat = Math.max(maxLat, d.lat);
+      minLng = Math.min(minLng, d.lng);
+      maxLng = Math.max(maxLng, d.lng);
+    }
+    return { minLat, maxLat, minLng, maxLng };
+  });
+
+  /** Ids visibles según el zoom (recorte central). `null` = todos (firehose). */
+  protected readonly visibleIds = computed<Set<string> | null>(() => {
+    const z = this.zoom();
+    const b = this.bounds();
+    if (z === 1 || !b) return null;
+
+    const cLat = (b.minLat + b.maxLat) / 2;
+    const cLng = (b.minLng + b.maxLng) / 2;
+    const halfLat = (b.maxLat - b.minLat) / 2 / z;
+    const halfLng = (b.maxLng - b.minLng) / 2 / z;
+
+    const ids = new Set<string>();
+    for (const d of this.fleet.devices())
+      if (Math.abs(d.lat - cLat) <= halfLat && Math.abs(d.lng - cLng) <= halfLng)
+        ids.add(d.deviceId);
+    return ids;
+  });
+
+  private lastViewportSig = '';
+
   constructor() {
     // Redibuja cuando cambia el snapshot coalescido (un repaint por ventana).
     effect(() => {
       const devices = this.fleet.devices();
+      const visible = this.visibleIds();
       const canvas = this.canvasRef();
-      if (canvas) this.draw(canvas.nativeElement, devices);
+      if (canvas) this.draw(canvas.nativeElement, devices, visible);
     });
+
+    // Sincroniza el viewport con el servidor solo cuando cambia el conjunto (evita spam).
+    effect(() => {
+      const ids = this.visibleIds();
+      const sig = ids === null ? 'ALL' : [...ids].sort().join(',');
+      if (sig === this.lastViewportSig) return;
+      this.lastViewportSig = sig;
+      this.fleet.setViewport(ids === null ? null : [...ids]);
+    });
+
+    // Al salir del dashboard, vuelve al firehose para el resto de la app.
+    inject(DestroyRef).onDestroy(() => this.fleet.setViewport(null));
   }
 
   ngAfterViewInit(): void {
@@ -73,10 +159,14 @@ export class Dashboard implements AfterViewInit {
     const dpr = window.devicePixelRatio || 1;
     canvas.width = Math.max(1, Math.floor(rect.width * dpr));
     canvas.height = Math.max(1, Math.floor(rect.height * dpr));
-    this.draw(canvas, this.fleet.devices());
+    this.draw(canvas, this.fleet.devices(), this.visibleIds());
   }
 
-  private draw(canvas: HTMLCanvasElement, devices: DeviceState[]): void {
+  private draw(
+    canvas: HTMLCanvasElement,
+    devices: DeviceState[],
+    visible: Set<string> | null
+  ): void {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     const { width: w, height: h } = canvas;
@@ -101,10 +191,14 @@ export class Dashboard implements AfterViewInit {
       const x = pad + ((d.lng - minLng) / spanLng) * (w - 2 * pad);
       // lat invertida: norte arriba
       const y = pad + ((maxLat - d.lat) / spanLat) * (h - 2 * pad);
+      const inViewport = visible === null || visible.has(d.deviceId);
       const t = Math.min(1, d.speedKmh / 120);
-      ctx.fillStyle = `rgb(${Math.round(60 + t * 180)}, ${Math.round(190 - t * 120)}, 80)`;
+      // Fuera del viewport: gris atenuado (congelado, no recibe deltas en vivo).
+      ctx.fillStyle = inViewport
+        ? `rgb(${Math.round(60 + t * 180)}, ${Math.round(190 - t * 120)}, 80)`
+        : 'rgba(110, 118, 129, 0.35)';
       ctx.beginPath();
-      ctx.arc(x, y, 3, 0, Math.PI * 2);
+      ctx.arc(x, y, inViewport ? 3 : 2, 0, Math.PI * 2);
       ctx.fill();
     }
   }

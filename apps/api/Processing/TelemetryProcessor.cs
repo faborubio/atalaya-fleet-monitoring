@@ -21,6 +21,7 @@ public sealed class TelemetryProcessor(
     IAlertStore alertStore,
     ITelemetryArchive telemetryArchive,
     IHubContext<TelemetryHub> hub,
+    ViewportRegistry viewport,
     ILogger<TelemetryProcessor> logger) : BackgroundService
 {
     private const int MaxBatch = 500;
@@ -44,7 +45,7 @@ public sealed class TelemetryProcessor(
             }
 
             if (deltas.Count > 0)
-                await hub.Clients.All.SendAsync("devicesUpdated", deltas, stoppingToken);
+                await SendAsync(deltas, stoppingToken);
 
             // Camino frío (ADR-007): archiva la telemetría cruda para la vista histórica.
             if (fresh.Count > 0)
@@ -59,5 +60,26 @@ public sealed class TelemetryProcessor(
                     await hub.Clients.All.SendAsync("alertsRaised", newAlerts, stoppingToken);
             }
         }
+    }
+
+    /// <summary>
+    /// Envío dual de deltas (AUD-008), igual que el <see cref="RedisDeltaForwarder"/>: firehose a
+    /// los clientes normales y grupos por dispositivo a los que están en modo viewport.
+    /// </summary>
+    private async Task SendAsync(IReadOnlyList<DeviceState> deltas, CancellationToken ct)
+    {
+        var viewportConns = viewport.ConnectionsInViewportMode();
+        if (viewportConns.Count == 0)
+        {
+            await hub.Clients.All.SendAsync("devicesUpdated", deltas, ct);
+            return;
+        }
+
+        await hub.Clients.AllExcept(viewportConns).SendAsync("devicesUpdated", deltas, ct);
+        var subscribed = viewport.SubscribedDevices();
+        foreach (var d in deltas)
+            if (subscribed.Contains(d.DeviceId))
+                await hub.Clients.Group(TelemetryHub.Group(d.DeviceId))
+                    .SendAsync("devicesUpdated", new[] { d }, ct);
     }
 }

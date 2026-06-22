@@ -13,6 +13,9 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddSignalR();
 
+// Registro de viewport (AUD-008): compartido por el hub y el forwarder/procesador.
+builder.Services.AddSingleton<Atalaya.Api.Processing.ViewportRegistry>();
+
 // Seguridad de ingesta (SAD §8): token de dispositivo + rate limiting.
 var ingestToken = builder.Configuration["Ingest:Token"] ?? string.Empty;
 var ingestRatePerSecond = builder.Configuration.GetValue("Ingest:RatePerSecond", 500);

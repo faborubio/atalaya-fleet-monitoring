@@ -49,8 +49,9 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
 ## 5. Estado actual
 
 **Fecha de actualización:** 2026-06-22
-**Fase:** 1 + 1.5 + ingesta desacoplada ([AUD-010](./AUDIT.md)) + **Fase 2 completa**: alertas
-([AUD-011](./AUDIT.md)) + camino frío ([AUD-012](./AUDIT.md)). Próximo: productivizar (CDK/Athena).
+**Fase:** 1 + 1.5 + ingesta desacoplada ([AUD-010](./AUDIT.md)) + **Fase 2 completa** (alertas
+[AUD-011](./AUDIT.md) + camino frío [AUD-012](./AUDIT.md)) + **productivización**: CDK
+([AUD-013](./AUDIT.md)) + viewport ([AUD-014](./AUDIT.md)). Pendiente real: Athena (cuenta AWS).
 
 ### Hecho
 - ✅ SAD v1.0.1 (ADR-001…011) + docs base. Repo en GitHub (12+ commits).
@@ -105,6 +106,11 @@ cero pérdida (59.200/59.200). Deuda menor: reintento/persistencia ante `Publish
 - **Camino frío (AUD-012)**: `ITelemetryArchive` (tabla `telemetry` particionada por día, retención
   O(1)) + `IRawEventArchive` (S3, solo en worker; `NullRawEventArchive` en InMemory). Endpoint
   `/api/history?deviceId&minutes&limit`. Worker config `Aws:Bucket` (data lake). S3 con `ForcePathStyle`.
+- **Viewport (AUD-014)**: `ViewportRegistry` + hub `SyncViewport(ids)`/`ClearViewport()`; el forwarder
+  hace envío dual (`Clients.All` por defecto; `AllExcept` + grupos `device:{id}` si hay clientes
+  viewport). Dashboard: control Todo/2×/4×. Opt-in: sin clientes viewport, idéntico al firehose.
+- **IaC (AUD-013)**: `infra/cdk/` (proyecto standalone). `npm run synth` / `deploy:local` (cdklocal).
+  Requiere `aws-cdk-local` 3.x con la CLI nueva ([TS-007](./TROUBLESHOOTING.md)).
 - Interfaces de extensión (para swaps sin reescribir): `ITelemetryPublisher`, `IDeviceStateRepository`,
   `IAlertRepository`, `ITelemetryArchive`, `IRawEventArchive`, `IEventDeduplicator`,
   `ITelemetryBroadcaster`, `IAlertBroadcaster`.
@@ -129,8 +135,9 @@ Carga: ver [DEPLOY.md §1.6](./DEPLOY.md) (k6 vía Docker).
 - ~~Fase 2 — camino frío (telemetry particionada + S3 data lake + vista histórica)~~ ✅ HECHO ([AUD-012](./AUDIT.md)).
 - ~~Productivizar: infra con **CDK** (ADR-009)~~ ✅ HECHO ([AUD-013](./AUDIT.md)): `infra/cdk/`
   (`cdk synth` offline + `cdklocal deploy` verificado). El `01-resources.sh` queda como atajo de dev.
-- **Productivizar (resto)**: **Athena** sobre el data lake S3 (solo AWS real); grupos por viewport
-  en SignalR (AUD-008, en curso).
+- ~~Grupos por viewport en SignalR (AUD-008)~~ ✅ HECHO ([AUD-014](./AUDIT.md)): push O(viewport),
+  opt-in sin regresión (firehose por defecto); control Todo/2×/4× en el dashboard.
+- **Productivizar (resto)**: **Athena** sobre el data lake S3 (solo AWS real, pendiente de cuenta).
 - Deuda menor: reintento/persistencia ante `PublishBatch` fallido (AUD-010); el simulador no genera
   valores de alerta crítica (solo aviso), lo crítico solo se ve por unit test (AUD-011).
 
@@ -181,8 +188,8 @@ Pendiente de crear: infra como **AWS CDK** (ADR-009). (S3 data lake + tabla `tel
 1. **Leer este archivo + [AUD-011](./AUDIT.md) y [AUD-012](./AUDIT.md)** (Fase 2: alertas + camino frío).
 2. ~~Desacoplar el publish a SNS~~ ✅ ([AUD-010](./AUDIT.md)). ~~Fase 2 alertas~~ ✅ ([AUD-011](./AUDIT.md)).
    ~~Fase 2 camino frío~~ ✅ ([AUD-012](./AUDIT.md)).
-3. **Productivizar**: infra `awslocal` → **AWS CDK** (ADR-009); **Athena** sobre el data lake S3 (AWS real).
-4. Pulido opcional: grupos por viewport en SignalR (AUD-008); CDK; medir contra AWS real.
+3. ~~Productivizar: **CDK** (ADR-009)~~ ✅ ([AUD-013](./AUDIT.md)). ~~Grupos por viewport~~ ✅ ([AUD-014](./AUDIT.md)).
+4. Pendiente real: **Athena** sobre el data lake S3 (requiere cuenta AWS); medir throughput contra AWS real.
 
 > Al cerrar cada sesión: actualiza §5 (estado), añade entrada en AUDIT.md si hubo cambio
 > auditable, y registra en TROUBLESHOOTING.md cualquier error resuelto.

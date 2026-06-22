@@ -19,6 +19,7 @@ namespace Atalaya.Api.Processing;
 public sealed class RedisDeltaForwarder(
     IConnectionMultiplexer redis,
     IHubContext<TelemetryHub> hub,
+    ViewportRegistry viewport,
     ILogger<RedisDeltaForwarder> logger) : BackgroundService
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -66,13 +67,35 @@ public sealed class RedisDeltaForwarder(
             if (merged.Count == 0) continue;
             try
             {
-                await hub.Clients.All.SendAsync("devicesUpdated", merged.Values.ToArray(), stoppingToken);
+                await SendAsync(merged.Values.ToArray(), stoppingToken);
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Fallo enviando deltas por SignalR");
             }
         }
+    }
+
+    /// <summary>
+    /// Envío dual (AUD-008): a los clientes del firehose, el lote completo por broadcast; a los
+    /// que están en modo viewport, solo el delta de cada dispositivo a su grupo. Si nadie está en
+    /// viewport, es un único <c>Clients.All</c> (comportamiento por defecto, sin sobrecoste).
+    /// </summary>
+    private async Task SendAsync(DeviceState[] batch, CancellationToken ct)
+    {
+        var viewportConns = viewport.ConnectionsInViewportMode();
+        if (viewportConns.Count == 0)
+        {
+            await hub.Clients.All.SendAsync("devicesUpdated", batch, ct);
+            return;
+        }
+
+        await hub.Clients.AllExcept(viewportConns).SendAsync("devicesUpdated", batch, ct);
+        var subscribed = viewport.SubscribedDevices();
+        foreach (var d in batch)
+            if (subscribed.Contains(d.DeviceId))
+                await hub.Clients.Group(TelemetryHub.Group(d.DeviceId))
+                    .SendAsync("devicesUpdated", new[] { d }, ct);
     }
 
     private static void Drain(ChannelReader<DeviceState[]> reader, Dictionary<string, DeviceState> merged)

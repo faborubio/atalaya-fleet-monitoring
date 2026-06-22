@@ -38,6 +38,9 @@ export class TelemetryStreamService {
    */
   readonly connected$: Observable<void> = this.connected.asObservable();
 
+  /** Último viewport solicitado (null = firehose). Se re-aplica tras reconectar. */
+  private viewport: string[] | null = null;
+
   async connect(): Promise<void> {
     if (this.connection) return;
 
@@ -58,6 +61,7 @@ export class TelemetryStreamService {
     this.connection.onreconnecting(() => this.status.set(HubConnectionState.Reconnecting));
     this.connection.onreconnected(() => {
       this.status.set(HubConnectionState.Connected);
+      void this.reapplyViewport(); // el servidor perdió el estado de grupos al reconectar
       this.connected.next(); // re-sincroniza el snapshot tras reconectar
     });
     this.connection.onclose(() => this.status.set(HubConnectionState.Disconnected));
@@ -69,5 +73,26 @@ export class TelemetryStreamService {
     } catch {
       this.status.set(HubConnectionState.Disconnected);
     }
+  }
+
+  /**
+   * Modo viewport (AUD-008): el cliente solo recibe los deltas de `deviceIds`. `null` vuelve al
+   * firehose. El servidor pierde los grupos al reconectar, por eso guardamos el último viewport.
+   */
+  async setViewport(deviceIds: string[] | null): Promise<void> {
+    const wasFirehose = this.viewport === null;
+    this.viewport = deviceIds;
+    if (this.connection?.state !== HubConnectionState.Connected) return;
+    if (deviceIds === null) {
+      if (!wasFirehose) await this.connection.invoke('ClearViewport'); // ya en firehose: nada que limpiar
+    } else {
+      await this.connection.invoke('SyncViewport', deviceIds);
+    }
+  }
+
+  private async reapplyViewport(): Promise<void> {
+    if (this.connection?.state !== HubConnectionState.Connected) return;
+    if (this.viewport === null) return; // firehose: nada que re-suscribir
+    await this.connection.invoke('SyncViewport', this.viewport);
   }
 }

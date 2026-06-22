@@ -36,6 +36,55 @@ proyecto.
 
 ---
 
+## AUD-014 — Productivización: grupos por viewport en SignalR (2026-06-22)
+
+**Fase:** Productivización (cierra el Top de [AUD-008](#aud-008--revisión-crítica-de-fases-01-brechas-con-producción-y-mejoras-2026-06-22)).
+**Alcance:** Escalar el push: el cliente recibe solo los deltas de los dispositivos visibles.
+**Auditor:** Fabián Rubio + Claude
+
+### Qué se hizo
+
+El push pasaba **todo a todos** (`Clients.All`). Ahora soporta **grupos por viewport** (AUD-008),
+**opt-in y sin regresión por defecto**:
+
+- **`ViewportRegistry`** (singleton): por conexión, el conjunto de dispositivos seguidos.
+- **`TelemetryHub`**: `SyncViewport(ids)` deja a la conexión suscrita exactamente a esos grupos
+  `device:{id}` (diff add/remove); `ClearViewport()` vuelve al firehose; limpieza en
+  `OnDisconnectedAsync`.
+- **Envío dual** (forwarder Aws + procesador InMemory): si nadie está en viewport, un único
+  `Clients.All` (comportamiento idéntico al previo). Si hay clientes viewport, se les **excluye del
+  broadcast** (`Clients.AllExcept`) y se les manda **solo su grupo**; el envío por grupos recorre
+  solo la **unión de dispositivos suscritos** (evita sends a grupos vacíos — fix de la revisión).
+- **Frontend**: `TelemetryStreamService.setViewport(ids|null)` (re-aplica tras reconectar);
+  `FleetStore.setViewport`; en el dashboard, control **Todo / 2× / 4×** que recorta el viewport al
+  centro del mapa, sincroniza la membresía solo cuando cambia, y **atenúa los dispositivos
+  congelados** (fuera del viewport).
+
+### Hallazgos
+
+| Sev | Hallazgo | Acción | Estado |
+|-----|----------|--------|--------|
+| ✅  | Push escalable por viewport, sin romper el firehose por defecto | grupos + `AllExcept` | Resuelto |
+| 🟡  | (revisión) El envío por grupos iteraba todos los dispositivos → sends a grupos vacíos | `SubscribedDevices()`: solo la unión suscrita | Resuelto |
+| 🔵  | (revisión) `setViewport(null)` invocaba `ClearViewport` aun ya en firehose | guarda `wasFirehose` | Resuelto |
+| 🟡  | Descubrimiento: un cliente viewport solo conoce dispositivos vía snapshot/reconexión (un disp. nuevo no aparece hasta el próximo snapshot) | Aceptable: semántica de viewport; snapshot en (re)conexión | Abierto (por diseño) |
+
+### Verificaciones
+
+- [x] `nx run-many -t build` (5) ✅ · `nx run-many -t lint test` ✅
+- [x] `nx test api-tests`: **18/18** — incluye **`ViewportTests`**: un **cliente SignalR real**
+      en modo viewport recibe el delta de `keep` y **no** el de `other` (prueba hub→grupos→registro→envío dual).
+- [x] Revisión de calidad (recall) sobre el diff: 2 hallazgos, ambos corregidos.
+
+### Conclusión
+
+AUD-008 cerrado: el push deja de ser O(flota) por cliente y pasa a O(viewport). Por defecto nada
+cambia (firehose); el modo viewport es aditivo y verificado E2E con un cliente SignalR.
+
+**Veredicto:** ✅ Grupos por viewport listos y verificados.
+
+---
+
 ## AUD-013 — Productivización: infraestructura como código con AWS CDK (2026-06-22)
 
 **Fase:** Productivización (ADR-009).

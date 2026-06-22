@@ -80,6 +80,14 @@ export class FleetStore {
     await this.stream.connect();
   }
 
+  /**
+   * Modo viewport (AUD-008): limita el push en vivo a `deviceIds` (los visibles). `null` vuelve
+   * al firehose. Los dispositivos fuera del viewport conservan su último estado (se "congelan").
+   */
+  setViewport(deviceIds: string[] | null): void {
+    void this.stream.setViewport(deviceIds);
+  }
+
   private loadSnapshot(): void {
     this.http
       .get<DeviceState[]>(`${this.config.baseUrl}/api/devices`)

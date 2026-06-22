@@ -10,10 +10,15 @@ que estresar.
 
 | | |
 |---|---|
-| **Versión** | 0.0.0 (pre-Fase 0) |
-| **Estado** | 🟡 En construcción — Fase 0 (cimientos) |
+| **Versión** | 0.1.0 |
+| **Estado** | 🟢 Fase 1 completa — camino caliente sobre infraestructura real |
 | **Autor** | Fabián Rubio — Full Stack (foco Frontend / Angular) |
+| **Repositorio** | https://github.com/faborubio/atalaya-fleet-monitoring |
 | **Documento rector** | [SAD-Atalaya.md](./SAD-Atalaya.md) |
+
+> **Lo que ya funciona (verificado E2E):** `simulador → API → SNS → SQS → worker →
+> dedup(Redis) → Postgres (read model) → Redis → API → SignalR → dashboard Angular en vivo`,
+> reproducible en local con Docker. Ver [AUDIT.md](./AUDIT.md) (AUD-001…006).
 
 ---
 
@@ -76,19 +81,21 @@ Las decisiones están registradas como **ADRs** en el [SAD](./SAD-Atalaya.md#5-d
 
 ## Estructura del repositorio
 
-> Monorepo **Nx 21**. El frontend y el simulador ya existen; backend e infra se añaden
-> al desbloquear sus prerequisitos (ver [AUDIT.md](./AUDIT.md)).
+> Monorepo **Nx 21** (Angular 20) + solución .NET 8.
 
 ```
 atalaya/
 ├─ apps/
-│  ├─ atalaya-web/      # SPA Angular: shell + features lazy (mapa, dispositivos, alertas, históricos)
+│  ├─ atalaya-web/      # SPA Angular: shell + features lazy; mapa en vivo (canvas) + tabla
 │  ├─ simulator/        # Generador de carga de telemetría (Node)
-│  ├─ api/              # .NET Minimal API + SignalR + camino caliente (dedup, read model)
-│  ├─ worker/           # .NET Worker Service (esqueleto; consumo SQS pendiente Docker)
-│  └─ api.tests/        # xUnit: test de integración del camino caliente
-├─ libs/contracts/      # DTOs .NET compartidos (TelemetryEvent, DeviceState)
-├─ infra/        ⛔      # AWS CDK (pendiente, falta Docker)
+│  ├─ api/              # .NET Minimal API + SignalR: ingesta→SNS, reenvío Redis→SignalR, lee read model
+│  ├─ worker/           # .NET Worker Service: consume SQS → dedup → Postgres → publica deltas
+│  └─ api.tests/        # xUnit: test de integración del camino caliente (sin Docker)
+├─ libs/
+│  ├─ contracts/        # DTOs .NET compartidos (TelemetryEvent, DeviceState)
+│  ├─ persistence/      # Read model en Postgres (Dapper/Npgsql)
+│  └─ realtime/         # Redis: dedup (ADR-006) + broadcaster pub/sub (ADR-002)
+├─ infra/               # docker-compose: LocalStack (SNS/SQS/S3) + Redis + Postgres
 ├─ Atalaya.sln, nuget.config
 ├─ SAD-Atalaya.md       # Documento de arquitectura (rector)
 ├─ README.md            # Este archivo
@@ -102,33 +109,43 @@ atalaya/
 
 ## Empezar
 
+Prerequisitos: **Node ≥ 20**, **.NET SDK 8**, **Docker Desktop** (todos ✅ en el entorno actual).
+
+### Ver el pipeline completo en vivo (4 terminales)
+
 ```bash
 npm install
+docker compose -f infra/docker-compose.yml up -d   # 1) infra: LocalStack + Redis + Postgres
 
-# Frontend (dashboard en http://localhost:4200)
-npm start                 # = nx serve atalaya-web
-
-# Backend .NET (API en http://localhost:3000)
-dotnet build Atalaya.sln
-npx nx serve api
-
-# Camino caliente end-to-end (en otra terminal, con la API arriba):
-npx nx build simulator
-node dist/apps/simulator/main.js --rate 1000 --devices 50 --duration 5 --url http://localhost:3000/ingest
-curl http://localhost:3000/api/devices    # read model device_state poblado
-
-# Verificación
-npx nx run-many -t build       # Angular + simulador + .NET
-npx nx run-many -t lint test   # lint + tests (front) ; nx test api-tests (backend)
+npx nx serve api                                    # 2) API  → http://localhost:3000
+npx nx serve worker                                 # 3) Worker (consume SQS)
+npm start                                           # 4) Dashboard → http://localhost:4200
 ```
 
-Prerequisitos:
+Luego inyecta carga y observa el dashboard moverse en vivo:
 
-- Node.js ≥ 20 y npm ≥ 10 ✅
-- **.NET SDK 8** ✅ (8.0.422)
-- **Docker Desktop** ⛔ — solo para infra/LocalStack y cola SQS real (ver [TROUBLESHOOTING.md](./TROUBLESHOOTING.md#ts-002--docker-no-disponible))
+```bash
+npx nx build simulator
+node dist/apps/simulator/main.js --rate 2000 --devices 100 --duration 30 --url http://localhost:3000/ingest
+```
 
-Más detalle en [DEPLOY.md](./DEPLOY.md).
+### Sin Docker (camino rápido)
+
+```bash
+ASPNETCORE_ENVIRONMENT="" npx nx serve api   # transporte InMemory: procesa en la API
+npm start                                    # dashboard
+node dist/apps/simulator/main.js --rate 1000 --devices 50 --duration 10 --url http://localhost:3000/ingest
+```
+
+### Verificación
+
+```bash
+npx nx run-many -t build       # Angular + simulador + .NET
+npx nx run-many -t lint test   # lint + tests (front)
+npx nx test api-tests          # test de integración del camino caliente (.NET, sin Docker)
+```
+
+Más detalle (modos, endpoints, rollback) en [DEPLOY.md](./DEPLOY.md).
 
 ---
 
@@ -136,10 +153,10 @@ Más detalle en [DEPLOY.md](./DEPLOY.md).
 
 | Fase | Alcance | Estado |
 |---|---|---|
-| **0 — Cimientos** | Monorepo Nx, esqueleto Angular + .NET, simulador, CI | ✅ (infra CDK pendiente Docker) |
-| **1 — Camino caliente** | Ingesta → cola → procesamiento → SignalR → dashboard en vivo | ✅ Modo dev (lazo completo verificado); falta SQS/Redis/SQL reales |
-| **2 — Alertas + camino frío** | Reglas + read model de alertas, histórico, S3/Athena | ⬜ Pendiente |
-| **3 — Endurecimiento** | DLQ/replay, OTel, prueba de carga 5k ev/s, seguridad | ⬜ Pendiente |
+| **0 — Cimientos** | Monorepo Nx, esqueleto Angular + .NET, simulador, CI | ✅ |
+| **1 — Camino caliente** | Ingesta → SNS/SQS → worker → dedup(Redis) → Postgres → SignalR → dashboard | ✅ Sobre infra real, verificado E2E |
+| **2 — Alertas + camino frío** | Reglas + read model de alertas, S3 data lake, telemetría particionada, histórico | ⬜ Pendiente |
+| **3 — Endurecimiento** | DLQ/replay, OTel, carga 5k ev/s, seguridad, backplane SignalR nativo, CDK | ⬜ Pendiente |
 
 Cada fase entrega algo demostrable y medido. Ver detalle en el
 [SAD §13](./SAD-Atalaya.md#13-roadmap-por-fases).

@@ -172,6 +172,12 @@ La ingesta **nunca escribe directo a la base**. Publica a **SNS** (fan-out), que
 **Razón:** se renderiza por lotes a ritmo de frame, no por evento. Es la diferencia entre un dashboard fluido y uno trabado.
 **Trade-off:** disciplina de inmutabilidad y de `trackBy`. Documentado.
 
+### ADR-011 — Implementación incremental: shims de dev tras interfaces, sustituibles por la infra real
+**Contexto:** construir el camino caliente de extremo a extremo antes de tener toda la nube exige poder correr el sistema en cada etapa, no solo al final.
+**Decisión:** cada dependencia de infraestructura se define tras una **interfaz** (`ITelemetryPublisher`, `IDeviceStateRepository`, `IEventDeduplicator`, `ITelemetryBroadcaster`) con dos implementaciones: una *in-memory* (modo `InMemory`, sin Docker, para tests y arranque rápido) y una real (modo `Aws`: SNS/SQS, Postgres, Redis). Un flag `Telemetry:Transport` selecciona el modo. Dos atajos de dev conscientes respecto al objetivo del SAD: (a) el push en vivo usa un **puente Redis pub/sub** (worker→Redis→API→SignalR) en lugar del **backplane nativo de SignalR** (`AddStackExchangeRedis`); (b) los recursos AWS se crean con **`awslocal`** en LocalStack en lugar de **AWS CDK** (ADR-009).
+**Razón:** entregar valor verificable por incrementos sin acoplar el dominio a un proveedor; el test de integración corre sin Docker; el cambio a la infra real no reescribe la lógica.
+**Trade-off:** dos implementaciones que mantener y dos atajos a productivizar (backplane nativo + CDK). Aceptado y registrado como deuda explícita en [AUDIT.md](./AUDIT.md) (AUD-006).
+
 ---
 
 ## 6. Modelo de datos y almacenamiento
@@ -307,6 +313,7 @@ Cada fase entrega algo demostrable y medido. La prueba de carga y la latencia ev
 | Versión | Fecha | Cambios |
 |---|---|---|
 | 1.0.0 | 2026-06-18 | Baseline. Arquitectura event-driven (SNS/SQS), camino caliente/frío con read models (CQRS pragmático), SignalR + backplane, NgRx para estado de app con el firehose fuera del Store, RxJS disciplinado, OnPush+Signals+coalescencia, almacenamiento particionado + S3 data lake, IaC con CDK + LocalStack, resiliencia (dedup/DLQ/replay), observabilidad OTel, NFRs medidos, riesgos y roadmap. ADR-001…010. |
+| 1.0.1 | 2026-06-22 | ADR-011: implementación incremental con shims de dev tras interfaces (flag `Telemetry:Transport`), puente Redis pub/sub como interino del backplane SignalR y `awslocal` como interino de CDK. Refleja Fase 0–1 implementadas (ver AUDIT AUD-001…006). |
 
 ---
 

@@ -19,6 +19,8 @@ public sealed class SqsTelemetryConsumer(
     IEventDeduplicator deduplicator,
     IDeviceStateRepository repository,
     IAlertRepository alertRepository,
+    ITelemetryArchive telemetryArchive,
+    IRawEventArchive rawArchive,
     ITelemetryBroadcaster broadcaster,
     IAlertBroadcaster alertBroadcaster,
     WorkerMetrics metrics,
@@ -94,6 +96,11 @@ public sealed class SqsTelemetryConsumer(
                 await broadcaster.PublishDeltasAsync(deltas, ct);
                 Interlocked.Add(ref _processed, fresh.Count);
                 metrics.AddProcessed(fresh.Count);
+
+                // Camino frío (ADR-007): telemetría cruda a SQL particionado + data lake S3.
+                await telemetryArchive.AppendAsync(fresh, ct);
+                await rawArchive.AppendAsync(fresh, ct);
+                metrics.AddArchived(fresh.Count);
 
                 // Reglas por umbral (Fase 2): evalúa sobre los eventos frescos, persiste de forma
                 // idempotente y notifica solo las alertas realmente nuevas (ADR-005/006).

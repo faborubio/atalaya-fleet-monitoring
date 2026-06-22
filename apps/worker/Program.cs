@@ -1,4 +1,5 @@
 using Amazon.Runtime;
+using Amazon.S3;
 using Amazon.SQS;
 using Atalaya.Persistence;
 using Atalaya.Realtime;
@@ -26,14 +27,28 @@ builder.Services.AddSingleton<IAmazonSQS>(_ =>
             AuthenticationRegion = aws.Region,
         }));
 
+// Cliente S3 del data lake (ADR-007). ForcePathStyle: LocalStack usa path-style, no v-host.
+builder.Services.AddSingleton<IAmazonS3>(_ =>
+    new AmazonS3Client(
+        new BasicAWSCredentials("test", "test"),
+        new AmazonS3Config
+        {
+            ServiceURL = aws.ServiceUrl,
+            AuthenticationRegion = aws.Region,
+            ForcePathStyle = true,
+        }));
+builder.Services.AddSingleton<IRawEventArchive, S3RawEventArchive>();
+
 builder.Services.AddAtalayaPersistence(builder.Configuration);
 builder.Services.AddAtalayaRedis(builder.Configuration);
 builder.Services.AddHostedService<SqsTelemetryConsumer>();
 
 var host = builder.Build();
 
-// El worker es dueño de los read models: asegura los esquemas al arrancar.
+// El worker es dueño de los read models y del camino frío: asegura esquemas y bucket al arrancar.
 await host.Services.GetRequiredService<IDeviceStateRepository>().EnsureSchemaAsync();
 await host.Services.GetRequiredService<IAlertRepository>().EnsureSchemaAsync();
+await host.Services.GetRequiredService<ITelemetryArchive>().EnsureSchemaAsync();
+await host.Services.GetRequiredService<IRawEventArchive>().EnsureBucketAsync();
 
 host.Run();

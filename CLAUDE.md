@@ -49,8 +49,8 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
 ## 5. Estado actual
 
 **Fecha de actualización:** 2026-06-22
-**Fase:** 1 + 1.5 + ingesta desacoplada ([AUD-010](./AUDIT.md)) + **Fase 2 slice 1: alertas**
-([AUD-011](./AUDIT.md)). Próximo: Fase 2 slice 2 (camino frío: telemetry particionada + S3).
+**Fase:** 1 + 1.5 + ingesta desacoplada ([AUD-010](./AUDIT.md)) + **Fase 2 completa**: alertas
+([AUD-011](./AUDIT.md)) + camino frío ([AUD-012](./AUDIT.md)). Próximo: productivizar (CDK/Athena).
 
 ### Hecho
 - ✅ SAD v1.0.1 (ADR-001…011) + docs base. Repo en GitHub (12+ commits).
@@ -74,6 +74,11 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
   Redis `atalaya:alerts:new` → API `RedisAlertForwarder`→SignalR (`alertsRaised`) → feature
   `alerts` (tabla en vivo + conteos, badge de críticas en nav). Paridad InMemory para tests.
   Verificado E2E. Métrica `atalaya.alerts.raised`.
+- ✅ **Fase 2 — camino frío** ([AUD-012](./AUDIT.md)): tabla `telemetry` **particionada por tiempo**
+  (`PostgresTelemetryArchive`, particiones diarias perezosas, retención O(1)) + **S3 data lake**
+  (`S3RawEventArchive` en worker, `raw/yyyy/MM/dd/`) → `GET /api/history` → feature `history`
+  (selector + gráfico SVG + tabla). Paridad InMemory. Verificado E2E (4.950 filas, 10 objetos S3).
+  Métrica `atalaya.telemetry.archived`. Athena = solo AWS real (deuda documentada).
 
 ### ✅ Hallazgo de carga de AUD-009 — RESUELTO ([AUD-010](./AUDIT.md))
 El cuello era el **`PublishAsync` síncrono a SNS por request** (p95 de `/ingest` = 34 s bajo
@@ -97,8 +102,12 @@ cero pérdida (59.200/59.200). Deuda menor: reintento/persistencia ante `Publish
 - **Alertas (AUD-011)**: reglas en `AlertRules` (contracts, umbrales como constantes públicas).
   Canal Redis de alertas `atalaya:alerts:new`; evento SignalR `alertsRaised`; endpoint `/api/alerts`.
   Severidad string (`Warning`/`Critical`). En InMemory las dispara el `TelemetryProcessor`.
-- Interfaces de extensión (para swaps sin reescribir): `ITelemetryPublisher`,
-  `IDeviceStateRepository`, `IAlertRepository`, `IEventDeduplicator`, `ITelemetryBroadcaster`, `IAlertBroadcaster`.
+- **Camino frío (AUD-012)**: `ITelemetryArchive` (tabla `telemetry` particionada por día, retención
+  O(1)) + `IRawEventArchive` (S3, solo en worker; `NullRawEventArchive` en InMemory). Endpoint
+  `/api/history?deviceId&minutes&limit`. Worker config `Aws:Bucket` (data lake). S3 con `ForcePathStyle`.
+- Interfaces de extensión (para swaps sin reescribir): `ITelemetryPublisher`, `IDeviceStateRepository`,
+  `IAlertRepository`, `ITelemetryArchive`, `IRawEventArchive`, `IEventDeduplicator`,
+  `ITelemetryBroadcaster`, `IAlertBroadcaster`.
 - `nuget.config` en la raíz ([TS-004](./TROUBLESHOOTING.md#ts-004--dotnet-no-resuelve-paquetes-nuget-sin-fuentes)).
 
 ### Cómo levantar todo (pipeline real)
@@ -117,11 +126,11 @@ Carga: ver [DEPLOY.md §1.6](./DEPLOY.md) (k6 vía Docker).
 - ~~Resolver el cuello de botella de ingesta~~ ✅ HECHO ([AUD-010](./AUDIT.md): desacople + batch a SNS).
   Deuda residual menor: reintento/persistencia ante `PublishBatch` fallido (hoy se loguea y se pierde).
 - ~~Fase 2 — alertas por umbral + read model de alertas~~ ✅ HECHO ([AUD-011](./AUDIT.md)).
-- **Fase 2 slice 2 (camino frío)**: tabla `telemetry` particionada por tiempo + **S3 data lake**
-  (ADR-007); vista histórica (feature `history`) sobre Postgres. Athena = solo AWS real
-  (LocalStack community no lo trae), documentarlo como deuda.
-- Productivizar: infra con **CDK** (ADR-009); backplane nativo de SignalR + grupos por viewport
-  (documentado en AUD-008 como opción, sin urgencia para flota completa).
+- ~~Fase 2 — camino frío (telemetry particionada + S3 data lake + vista histórica)~~ ✅ HECHO ([AUD-012](./AUDIT.md)).
+- **Productivizar**: infra con **CDK** (ADR-009); **Athena** sobre el data lake S3 (solo AWS real);
+  backplane nativo de SignalR + grupos por viewport (AUD-008, sin urgencia).
+- Deuda menor: reintento/persistencia ante `PublishBatch` fallido (AUD-010); el simulador no genera
+  valores de alerta crítica (solo aviso), lo crítico solo se ve por unit test (AUD-011).
 
 ### Toolchain verificado (2026-06-21)
 - ✅ git 2.51 · Node v24.15 · npm 11.14 · Nx 21.6.11 · **.NET SDK 8.0.422** · **Docker 29.5.3**
@@ -136,17 +145,17 @@ atalaya/
 │  ├─ atalaya-web/   # SPA Angular (shell + features lazy)
 │  ├─ simulator/     # generador de carga de telemetría (Node)
 │  ├─ api/           # .NET Minimal API + SignalR + ingesta(SNS) + forwarders Redis→SignalR (deltas/alertas) + auth
-│  ├─ worker/        # .NET Worker: consume SQS → dedup → Postgres → deltas + reglas de alerta; OTel
-│  └─ api.tests/     # xUnit: integración camino caliente + alertas (InMemory) + reglas + batching SNS
+│  ├─ worker/        # .NET Worker: SQS → dedup → read models + alertas + camino frío (telemetry+S3); OTel
+│  └─ api.tests/     # xUnit: caliente + alertas + histórico (InMemory) + reglas + batching SNS
 ├─ libs/contracts/   # DTOs .NET compartidos (TelemetryEvent, DeviceState, Alert, AlertRules)
-├─ libs/persistence/ # read models en Postgres (device_state + alerts; Dapper/Npgsql)
+├─ libs/persistence/ # Postgres: device_state + alerts + telemetry particionada + IRawEventArchive (Dapper/Npgsql)
 ├─ libs/realtime/    # Redis: dedup (ADR-006) + broadcaster pub/sub (ADR-002)
 ├─ infra/            # docker-compose (LocalStack+Redis+Postgres) + load/ingest.js (k6)
 ├─ Atalaya.sln, nuget.config
 ├─ *.md              # SAD, README, AUDIT, DEPLOY, TROUBLESHOOTING, CLAUDE
 └─ nx.json, package.json, tsconfig.base.json, eslint.config.mjs
 ```
-Pendiente de crear: infra como **AWS CDK** (ADR-009); S3 data lake + tabla `telemetry` (Fase 2).
+Pendiente de crear: infra como **AWS CDK** (ADR-009). (S3 data lake + tabla `telemetry` ✅ AUD-012.)
 
 ## 6. Decisiones de arquitectura clave (resumen — el detalle está en el SAD)
 
@@ -167,12 +176,11 @@ Pendiente de crear: infra como **AWS CDK** (ADR-009); S3 data lake + tabla `tele
 
 ## 7. Próximos pasos sugeridos (para la nueva sesión)
 
-1. **Leer este archivo + [AUD-010](./AUDIT.md) y [AUD-011](./AUDIT.md)** (ingesta desacoplada + alertas).
-2. ~~Desacoplar el publish a SNS~~ ✅ HECHO en [AUD-010](./AUDIT.md) (p95 de `/ingest`: 34 s → 34 ms).
-3. ~~Fase 2 — alertas por umbral~~ ✅ HECHO en [AUD-011](./AUDIT.md).
-4. **Fase 2 slice 2 (camino frío)**: tabla `telemetry` particionada + S3 data lake + vista histórica
-   (feature `history`) sobre Postgres; Athena documentado como solo-AWS-real (ADR-007).
-5. Si se retoma la infra: pasar `awslocal` → **AWS CDK** (ADR-009).
+1. **Leer este archivo + [AUD-011](./AUDIT.md) y [AUD-012](./AUDIT.md)** (Fase 2: alertas + camino frío).
+2. ~~Desacoplar el publish a SNS~~ ✅ ([AUD-010](./AUDIT.md)). ~~Fase 2 alertas~~ ✅ ([AUD-011](./AUDIT.md)).
+   ~~Fase 2 camino frío~~ ✅ ([AUD-012](./AUDIT.md)).
+3. **Productivizar**: infra `awslocal` → **AWS CDK** (ADR-009); **Athena** sobre el data lake S3 (AWS real).
+4. Pulido opcional: grupos por viewport en SignalR (AUD-008); CDK; medir contra AWS real.
 
 > Al cerrar cada sesión: actualiza §5 (estado), añade entrada en AUDIT.md si hubo cambio
 > auditable, y registra en TROUBLESHOOTING.md cualquier error resuelto.

@@ -1,6 +1,7 @@
 using Atalaya.Api.Hubs;
 using Atalaya.Api.Services;
 using Atalaya.Contracts;
+using Atalaya.Persistence;
 using Microsoft.AspNetCore.SignalR;
 
 namespace Atalaya.Api.Processing;
@@ -18,6 +19,7 @@ public sealed class TelemetryProcessor(
     IDeduplicator deduplicator,
     IDeviceStateStore store,
     IAlertStore alertStore,
+    ITelemetryArchive telemetryArchive,
     IHubContext<TelemetryHub> hub,
     ILogger<TelemetryProcessor> logger) : BackgroundService
 {
@@ -43,6 +45,10 @@ public sealed class TelemetryProcessor(
 
             if (deltas.Count > 0)
                 await hub.Clients.All.SendAsync("devicesUpdated", deltas, stoppingToken);
+
+            // Camino frío (ADR-007): archiva la telemetría cruda para la vista histórica.
+            if (fresh.Count > 0)
+                await telemetryArchive.AppendAsync(fresh, stoppingToken);
 
             // Reglas por umbral (Fase 2): idéntico al worker, pero sobre el store en memoria.
             var raised = fresh.SelectMany(AlertRules.Evaluate).ToList();

@@ -61,6 +61,7 @@ else
     // El procesamiento corre en proceso (ADR-008 lo mueve al worker en modo Aws).
     builder.Services.AddSingleton<IDeviceStateStore, InMemoryDeviceStateStore>();
     builder.Services.AddSingleton<IAlertStore, InMemoryAlertStore>();
+    builder.Services.AddSingleton<ITelemetryArchive, InMemoryTelemetryArchive>();
     builder.Services.AddSingleton<ITelemetryBus, InMemoryTelemetryBus>();
     builder.Services.AddSingleton<ITelemetryPublisher, InMemoryTelemetryPublisher>();
     builder.Services.AddSingleton<IDeduplicator, InMemoryDeduplicator>();
@@ -80,6 +81,7 @@ if (useAws)
 {
     await app.Services.GetRequiredService<IDeviceStateRepository>().EnsureSchemaAsync();
     await app.Services.GetRequiredService<IAlertRepository>().EnsureSchemaAsync();
+    await app.Services.GetRequiredService<ITelemetryArchive>().EnsureSchemaAsync();
 }
 
 app.UseCors(DevCors);
@@ -113,6 +115,21 @@ else
     app.MapGet("/api/devices", (IDeviceStateStore store) => Results.Ok(store.Snapshot()));
     app.MapGet("/api/alerts", (IAlertStore store) => Results.Ok(store.Snapshot()));
 }
+
+// Camino frío (ADR-005/007): histórico por dispositivo desde la telemetría particionada.
+// No compite con el camino caliente; lee del archivo, no de los read models en vivo.
+app.MapGet("/api/history", async (
+    string deviceId, ITelemetryArchive archive, CancellationToken ct,
+    int minutes = 60, int limit = 1000) =>
+{
+    if (string.IsNullOrWhiteSpace(deviceId))
+        return Results.BadRequest(new { error = "deviceId es obligatorio" });
+
+    var to = DateTimeOffset.UtcNow;
+    var from = to.AddMinutes(-Math.Clamp(minutes, 1, 24 * 60));
+    var points = await archive.QueryAsync(deviceId, from, to, Math.Clamp(limit, 1, 5000), ct);
+    return Results.Ok(points);
+});
 
 // Hub de deltas en vivo (ADR-002).
 app.MapHub<TelemetryHub>("/hubs/telemetry");

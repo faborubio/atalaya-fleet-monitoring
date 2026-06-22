@@ -15,6 +15,7 @@ public sealed class WorkerMetrics
     private readonly Counter<long> _processed;
     private readonly Counter<long> _duplicates;
     private readonly Counter<long> _alertsRaised;
+    private readonly Counter<long> _archived;
 
     public WorkerMetrics(IMeterFactory factory)
     {
@@ -25,10 +26,12 @@ public sealed class WorkerMetrics
         _processed = meter.CreateCounter<long>("atalaya.events.processed");
         _duplicates = meter.CreateCounter<long>("atalaya.events.duplicates");
         _alertsRaised = meter.CreateCounter<long>("atalaya.alerts.raised");
+        _archived = meter.CreateCounter<long>("atalaya.telemetry.archived");
     }
 
     public void RecordLatency(double milliseconds) => _pipelineLatency.Record(milliseconds);
     public void AddProcessed(long count) => _processed.Add(count);
     public void AddDuplicates(long count) => _duplicates.Add(count);
     public void AddAlerts(long count) => _alertsRaised.Add(count);
+    public void AddArchived(long count) => _archived.Add(count);
 }

@@ -15,6 +15,7 @@ public static class ServiceCollectionExtensions
             o.ConnectionString = configuration.GetConnectionString("Postgres") ?? string.Empty);
         services.AddSingleton<IDeviceStateRepository, PostgresDeviceStateRepository>();
         services.AddSingleton<IAlertRepository, PostgresAlertRepository>();
+        services.AddSingleton<ITelemetryArchive, PostgresTelemetryArchive>();
         return services;
     }
 }

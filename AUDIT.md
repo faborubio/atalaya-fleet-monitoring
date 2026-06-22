@@ -36,6 +36,63 @@ proyecto.
 
 ---
 
+## AUD-012 — Fase 2 (slice 2): camino frío — telemetría particionada + S3 data lake (2026-06-22)
+
+**Fase:** Fase 2 — Camino frío (segundo vertical slice del roadmap SAD §10).
+**Alcance:** Tabla `telemetry` particionada por tiempo + S3 data lake + vista histórica.
+**Auditor:** Fabián Rubio + Claude
+
+### Qué se hizo
+
+Segundo vertical de Fase 2, el **camino frío** (ADR-005/007), sin tocar el caliente:
+
+- **Tabla `telemetry` particionada por rango de tiempo** (`PostgresTelemetryArchive`): parent
+  `PARTITION BY RANGE (ts)` + particiones diarias `telemetry_pYYYYMMDD` creadas **de forma
+  perezosa** (idempotente y tolerante a carreras entre consumidores). Habilita retención O(1) por
+  `DROP PARTITION`. Insert por lote con `unnest` + `ON CONFLICT DO NOTHING` (idempotente). Índice
+  `(device_id, ts DESC)`.
+- **S3 data lake** (`S3RawEventArchive` en el worker, AWSSDK.S3): vuelca cada lote crudo como un
+  objeto JSON inmutable bajo `raw/yyyy/MM/dd/`. `ForcePathStyle` para LocalStack. Bucket asegurado
+  al arrancar (lo crea el init de LocalStack; `EnsureBucketAsync` es idempotente).
+- **Worker**: tras el camino caliente, escribe `fresh` a SQL particionado + S3; métrica OTel
+  `atalaya.telemetry.archived`.
+- **API**: `GET /api/history?deviceId&minutes&limit` lee el archivo (no los read models en vivo).
+  **Paridad InMemory** (`InMemoryTelemetryArchive`) para dev sin Docker y tests.
+- **Frontend**: feature `history` — selector de dispositivo (autocompletado desde el read model
+  en vivo) + rango + métrico, **gráfico SVG** de la serie temporal + tabla + resumen (mín/máx/prom).
+  Consulta REST puntual; no usa el stream.
+- **Athena**: documentado como **solo AWS real** (LocalStack community no lo trae); la vista local
+  se sirve desde Postgres particionado. Deuda registrada, no bloqueante.
+
+### Hallazgos
+
+| Sev | Hallazgo | Acción | Estado |
+|-----|----------|--------|--------|
+| ✅  | Telemetría cruda persiste en SQL particionado + S3, consultable por histórico | ITelemetryArchive + IRawEventArchive | Resuelto |
+| 🟡  | Athena (consulta ad-hoc del data lake) no corre en LocalStack community | Documentado como solo-AWS-real; histórico local sobre Postgres | Abierto (por diseño) |
+| 🔵  | Particiones diarias creadas perezosamente: una carrera entre 2 consumidores podría duplicar el CREATE | `EnsurePartitionAsync` ignora 42P07/23505/23P01 | Resuelto |
+
+### Verificaciones
+
+- [x] `nx run-many -t build` (5 proyectos) ✅ · `nx run-many -t lint test` ✅
+- [x] `nx test api-tests`: **17/17** (+2 de integración InMemory de `/api/history`).
+- [x] **E2E** (API+worker en Aws, simulador 500 ev/s × 10 s = 4.950 ev): tabla `telemetry`
+      **4.950 filas / 20 dispositivos** (cero pérdida), partición `telemetry_p20260622` creada,
+      **10 objetos** crudos en `s3://atalaya-datalake/raw/2026-06-22/`, métrica
+      `atalaya.telemetry.archived=4.950`, `GET /api/history` devuelve 248 puntos de `dev-00001`
+      ordenados por ts desc.
+
+### Conclusión
+
+Camino frío cerrado: la telemetría cruda viaja a SQL particionado por tiempo (retención O(1)) y al
+data lake S3 inmutable, y la vista histórica la consulta sin competir con el camino caliente. Con
+esto **Fase 2 queda completa** (alertas + camino frío). Pendiente de productivización: Athena sobre
+S3 (AWS real) e IaC con CDK (ADR-009).
+
+**Veredicto:** ✅ Fase 2 completa (alertas + camino frío).
+
+---
+
 ## AUD-011 — Fase 2 (slice 1): alertas por umbral end-to-end (2026-06-22)
 
 **Fase:** Fase 2 — Alertas (primer vertical slice del roadmap SAD §10).

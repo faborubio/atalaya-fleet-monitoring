@@ -10,6 +10,11 @@
     <PackageReference Include="AWSSDK.SimpleNotificationService" Version="4.0.3.7" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Expone los helpers internos (p. ej. el planificador de lotes SNS) al proyecto de tests. -->
+    <InternalsVisibleTo Include="Atalaya.Api.Tests" />
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>

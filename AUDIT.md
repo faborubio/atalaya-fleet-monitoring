@@ -55,6 +55,9 @@ Se **desacopló el publish del request** (remedio #2 de AUD-009):
   (25 ms) y publica a SNS por **lotes**: agrupa eventos en mensajes (cada uno un array JSON, como
   ya esperaba el worker) y manda hasta **10 mensajes por `PublishBatch`** (límite de SNS). Pasa de
   un PublishAsync por request a unas pocas llamadas batch por segundo.
+- El armado de lotes (`PlanBatches`, método puro y testeado) respeta **los dos** límites de SNS
+  PublishBatch: ≤10 mensajes **y ≤256 KB por lote** (con margen, presupuesto 240 KB). Esto cierra
+  un riesgo latente de pérdida silenciosa: a 100 ev/msg, 10 mensajes rozaban los 256 KB.
 - Canal **acotado con espera** (backpressure): si el publicador se atrasa, la escritura espera en
   vez de perder eventos (consistente con el `InMemoryTelemetryBus`, ADR-001).
 - Tunables en `Aws` (`AwsOptions`): `PublisherQueueCapacity` (200k), `MessageMaxEvents` (100),
@@ -65,12 +68,13 @@ Se **desacopló el publish del request** (remedio #2 de AUD-009):
 | Sev | Hallazgo | Acción | Estado |
 |-----|----------|--------|--------|
 | ✅  | `/ingest` ya no bloquea en SNS | Encolar + batch en background | Resuelto |
-| 🟡  | Un `PublishBatch` fallido **pierde** esos eventos (ya no se propaga al request) | Se loguea como error; el reintento honesto queda como deuda (DLQ/persistir cola) | Abierto |
+| 🟠  | El `PublishBatch` rozaba el límite de 256 KB/lote (100 ev/msg × 10 ≈ 250 KB): overflow = rechazo + pérdida silenciosa | `PlanBatches` acota el lote por bytes (presupuesto 240 KB) además de por ≤10 entradas; test unitario fija el contrato | Resuelto |
+| 🟡  | Un `PublishBatch` fallido **pierde** esos eventos (ya no se propaga al request); igual al apagar la API se pierde lo buffered (canal no durable) | Se loguea como error; reintento/persistencia/drenado en shutdown queda como deuda | Abierto |
 | 🔵  | `HotPathTests` fallaba en HEAD: `WebApplicationFactory` arranca en *Development* y exigía el token de dev | El test fuerza `Ingest:Token=""` (cubre el camino caliente, no la auth) | Resuelto |
 
 ### Verificaciones
 
-- [x] `nx build api` · `nx test api-tests` ✅ · `nx run-many -t lint test` ✅
+- [x] `nx build api` · `nx test api-tests` ✅ (5 tests: camino caliente + 4 de `PlanBatches`) · `nx run-many -t lint test` ✅
 - [x] **E2E** (API+worker en Aws, simulador 2.000 ev/s × 30 s): `enviados=59.200 fallidos=0`,
       worker `events.processed=59.200` (cero pérdida), cola SQS = 0.
 - [x] **k6** (ramp a ~5.000 ev/s, 65 s): **p95 = 34 ms** (umbral <500 ms ✅), `http_req_failed=0%`,

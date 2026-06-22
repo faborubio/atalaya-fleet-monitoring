@@ -1,0 +1,23 @@
+{
+  "name": "atalaya-cdk",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Infraestructura de Atalaya como código (AWS CDK, ADR-009). Reemplaza el script awslocal.",
+  "scripts": {
+    "synth": "cdk synth",
+    "diff": "cdk diff",
+    "deploy:local": "cdklocal bootstrap && cdklocal deploy --require-approval never",
+    "destroy:local": "cdklocal destroy --force"
+  },
+  "devDependencies": {
+    "aws-cdk": "^2.1100.0",
+    "aws-cdk-local": "^3.0.4",
+    "ts-node": "^10.9.2",
+    "typescript": "~5.9.2",
+    "@types/node": "^20.19.9"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.150.0",
+    "constructs": "^10.3.0"
+  }
+}

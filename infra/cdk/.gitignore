@@ -1,0 +1,8 @@
+node_modules/
+cdk.out/
+*.js
+*.d.ts
+
+# El .gitignore raíz ignora [Bb]in/ (regla .NET); aquí bin/ es código fuente CDK.
+!bin/
+!bin/*.ts

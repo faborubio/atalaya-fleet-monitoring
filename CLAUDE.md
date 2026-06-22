@@ -127,8 +127,10 @@ Carga: ver [DEPLOY.md §1.6](./DEPLOY.md) (k6 vía Docker).
   Deuda residual menor: reintento/persistencia ante `PublishBatch` fallido (hoy se loguea y se pierde).
 - ~~Fase 2 — alertas por umbral + read model de alertas~~ ✅ HECHO ([AUD-011](./AUDIT.md)).
 - ~~Fase 2 — camino frío (telemetry particionada + S3 data lake + vista histórica)~~ ✅ HECHO ([AUD-012](./AUDIT.md)).
-- **Productivizar**: infra con **CDK** (ADR-009); **Athena** sobre el data lake S3 (solo AWS real);
-  backplane nativo de SignalR + grupos por viewport (AUD-008, sin urgencia).
+- ~~Productivizar: infra con **CDK** (ADR-009)~~ ✅ HECHO ([AUD-013](./AUDIT.md)): `infra/cdk/`
+  (`cdk synth` offline + `cdklocal deploy` verificado). El `01-resources.sh` queda como atajo de dev.
+- **Productivizar (resto)**: **Athena** sobre el data lake S3 (solo AWS real); grupos por viewport
+  en SignalR (AUD-008, en curso).
 - Deuda menor: reintento/persistencia ante `PublishBatch` fallido (AUD-010); el simulador no genera
   valores de alerta crítica (solo aviso), lo crítico solo se ve por unit test (AUD-011).
 

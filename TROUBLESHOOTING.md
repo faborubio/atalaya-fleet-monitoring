@@ -32,6 +32,32 @@ resolvieron**. El objetivo es no tropezar dos veces con la misma piedra.
 
 ---
 
+## TS-007 — `cdklocal` rompe con la CLI nueva de aws-cdk (`lib/cdk-toolkit` not exported)
+
+**Fecha:** 2026-06-22 · **Área:** infra · **Estado:** ✅ Resuelto (2026-06-22)
+
+**Síntoma**
+```
+Error [ERR_PACKAGE_PATH_NOT_EXPORTED]: Package subpath './lib/cdk-toolkit' is not defined
+by "exports" in .../node_modules/aws-cdk/package.json
+```
+Al correr `cdklocal bootstrap`/`deploy` con `aws-cdk` 2.1xxx instalado.
+
+**Causa raíz**
+La CLI de `aws-cdk` se re-empaquetó en la línea **2.1xxx** y dejó de exportar
+`lib/cdk-toolkit`. `aws-cdk-local` **2.x** (que parchea ese módulo interno) ya no es compatible.
+
+**Solución**
+Usar **`aws-cdk-local` 3.x** con la CLI nueva. En `infra/cdk/package.json`:
+`"aws-cdk": "^2.1100.0"` + `"aws-cdk-local": "^3.0.4"`. Reinstalar y reintentar; el deploy a
+LocalStack vuelve a funcionar (stack `AtalayaStack` desplegado y verificado).
+
+**Prevención**
+Mantener emparejados el major de `aws-cdk-local` (3.x) con la CLI 2.1xxx. `cdk synth` no depende
+de cdklocal, así que sirve como verificación offline independiente del problema.
+
+---
+
 ## TS-001 — No hay .NET SDK (solo runtime)
 
 **Fecha:** 2026-06-21 · **Área:** backend · **Estado:** ✅ Resuelto (2026-06-21)

@@ -44,5 +44,7 @@ docker exec atalaya-dev-localstack-1 awslocal s3 ls
 | Redis | `localhost:6379` |
 | Postgres | `Host=localhost;Port=5432;Database=atalaya;Username=atalaya;Password=atalaya` |
 
-> **Objetivo (ADR-009):** estos recursos los definirá **AWS CDK**; el `01-resources.sh`
-> con `awslocal` es el atajo de dev para tener el pipeline corriendo ya.
+> **IaC (ADR-009):** estos recursos están definidos como **AWS CDK** en [`cdk/`](./cdk) —
+> verificado con `cdk synth` (offline) y `cdklocal deploy` contra LocalStack. El
+> `01-resources.sh` con `awslocal` se mantiene como **atajo de dev de cero fricción**
+> (provisiona al arrancar el compose); el CDK es la fuente de verdad productiva.

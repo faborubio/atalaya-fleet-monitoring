@@ -36,6 +36,50 @@ proyecto.
 
 ---
 
+## AUD-013 — Productivización: infraestructura como código con AWS CDK (2026-06-22)
+
+**Fase:** Productivización (ADR-009).
+**Alcance:** Definir la infra event-driven como CDK; reemplaza el script `awslocal`.
+**Auditor:** Fabián Rubio + Claude
+
+### Qué se hizo
+
+`infra/cdk/` — proyecto **CDK standalone** (TypeScript, aislado del monorepo Angular) que define
+la infra del SAD como código (ADR-009), equivalente 1:1 del `infra/localstack/init/01-resources.sh`:
+
+- **`AtalayaStack`** (`lib/atalaya-stack.ts`): SNS topic `atalaya-telemetry` → SQS
+  `atalaya-telemetry-queue` (redrive a DLQ `atalaya-telemetry-dlq`, maxReceiveCount=5) con
+  suscripción `RawMessageDelivery=true`; S3 `atalaya-datalake` con **lifecycle** IA(30 d)→Glacier(90 d)
+  (cold/archive, ADR-007). Nombres físicos fijos → los servicios .NET (resuelven por nombre) no cambian.
+- Scripts: `synth` (offline), `deploy:local`/`destroy:local` (cdklocal contra LocalStack).
+- El `docker-compose` + `01-resources.sh` se mantiene como **atajo de dev de cero fricción**; el CDK
+  es la fuente de verdad productiva.
+
+### Hallazgos
+
+| Sev | Hallazgo | Acción | Estado |
+|-----|----------|--------|--------|
+| ✅  | Infra como código, desplegable a LocalStack o AWS real | `infra/cdk` (CDK v2) | Resuelto |
+| 🔵  | `cdklocal` 2.x rompe con la CLI nueva de aws-cdk (2.1xxx): `lib/cdk-toolkit` not exported | `aws-cdk-local` 3.x ([TS-007](./TROUBLESHOOTING.md#ts-007--cdklocal-rompe-con-la-cli-nueva-de-aws-cdk-libcdk-toolkit-not-exported)) | Resuelto |
+| 🟡  | El `01-resources.sh` y el CDK quedan **duplicados** (dos fuentes de la misma infra) | Aceptable: script = atajo dev; CDK = productivo. Migrar dev a cdklocal queda opcional | Abierto (por diseño) |
+
+### Verificaciones
+
+- [x] `cdk synth` → CloudFormation válido (bucket+lifecycle, DLQ, cola+redrive, topic, subscripción), **offline sin cuenta**.
+- [x] `cdklocal bootstrap` + `cdklocal deploy` contra LocalStack standalone → stack `AtalayaStack`
+      desplegado (9/9 recursos, 5,2 s). Verificado con `awslocal`: cola+DLQ, topic, bucket,
+      `RedrivePolicy maxReceiveCount=5`, suscripción SNS→SQS. Contenedor de prueba eliminado.
+
+### Conclusión
+
+ADR-009 cumplido: la infra deja de vivir solo en un script imperativo y pasa a CDK versionado,
+sintetizable y desplegable (verificado contra LocalStack). Pendiente de productivización: Athena
+(AWS real) y grupos por viewport en SignalR.
+
+**Veredicto:** ✅ IaC con CDK lista y verificada.
+
+---
+
 ## AUD-012 — Fase 2 (slice 2): camino frío — telemetría particionada + S3 data lake (2026-06-22)
 
 **Fase:** Fase 2 — Camino frío (segundo vertical slice del roadmap SAD §10).

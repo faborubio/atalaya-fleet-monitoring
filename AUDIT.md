@@ -36,6 +36,58 @@ proyecto.
 
 ---
 
+## AUD-010 — Desacople del publish a SNS en `/ingest` (2026-06-22)
+
+**Fase:** Cierre del hallazgo 🔴 de [AUD-009](#aud-009--fase-15-endurecimiento--hallazgo-de-prueba-de-carga-2026-06-22) (remedio #2).
+**Alcance:** Camino de ingesta de la API en modo Aws: `/ingest` → SNS.
+**Auditor:** Fabián Rubio + Claude
+
+### Qué se hizo
+
+El cuello medido en AUD-009 era el **`PublishAsync` síncrono a SNS por request**: la API
+esperaba el round-trip a SNS dentro del handler, así que bajo concurrencia los requests se
+encolaban y la latencia explotaba (p95 **34 s**).
+
+Se **desacopló el publish del request** (remedio #2 de AUD-009):
+- `/ingest` ahora solo **encola** los eventos en un canal en memoria acotado y responde **202**
+  al instante (`QueueingTelemetryPublisher`, sustituye al `SnsTelemetryPublisher` síncrono).
+- Un `SnsBatchPublisher` (BackgroundService) **drena** el canal, **coalesce** una ventana corta
+  (25 ms) y publica a SNS por **lotes**: agrupa eventos en mensajes (cada uno un array JSON, como
+  ya esperaba el worker) y manda hasta **10 mensajes por `PublishBatch`** (límite de SNS). Pasa de
+  un PublishAsync por request a unas pocas llamadas batch por segundo.
+- Canal **acotado con espera** (backpressure): si el publicador se atrasa, la escritura espera en
+  vez de perder eventos (consistente con el `InMemoryTelemetryBus`, ADR-001).
+- Tunables en `Aws` (`AwsOptions`): `PublisherQueueCapacity` (200k), `MessageMaxEvents` (100),
+  `FlushMilliseconds` (25).
+
+### Hallazgos
+
+| Sev | Hallazgo | Acción | Estado |
+|-----|----------|--------|--------|
+| ✅  | `/ingest` ya no bloquea en SNS | Encolar + batch en background | Resuelto |
+| 🟡  | Un `PublishBatch` fallido **pierde** esos eventos (ya no se propaga al request) | Se loguea como error; el reintento honesto queda como deuda (DLQ/persistir cola) | Abierto |
+| 🔵  | `HotPathTests` fallaba en HEAD: `WebApplicationFactory` arranca en *Development* y exigía el token de dev | El test fuerza `Ingest:Token=""` (cubre el camino caliente, no la auth) | Resuelto |
+
+### Verificaciones
+
+- [x] `nx build api` · `nx test api-tests` ✅ · `nx run-many -t lint test` ✅
+- [x] **E2E** (API+worker en Aws, simulador 2.000 ev/s × 30 s): `enviados=59.200 fallidos=0`,
+      worker `events.processed=59.200` (cero pérdida), cola SQS = 0.
+- [x] **k6** (ramp a ~5.000 ev/s, 65 s): **p95 = 34 ms** (umbral <500 ms ✅), `http_req_failed=0%`,
+      2.212 requests todos 202, cola SQS = 0 (el publicador mantuvo el ritmo).
+
+### Conclusión
+
+El cuello de ingesta de AUD-009 queda resuelto en la capa de la API: **p95 de `/ingest` baja de
+~34 s a ~34 ms** (≈1000×) sosteniendo el objetivo de 5.000 ev/s contra LocalStack, con cero
+pérdida E2E. La meta a escala real sigue dependiendo de medir contra AWS real y, si hace falta,
+ingesta serverless (remedio #3, sin urgencia). Deuda menor: reintento/persistencia ante
+`PublishBatch` fallido.
+
+**Veredicto:** ✅ Hallazgo crítico de AUD-009 cerrado.
+
+---
+
 ## AUD-009 — Fase 1.5 (endurecimiento) + hallazgo de prueba de carga (2026-06-22)
 
 **Fase:** Fase 1.5 — Endurecimiento (Top 5 de [AUD-008](#aud-008--revisión-crítica-de-fases-01-brechas-con-producción-y-mejoras-2026-06-22)).

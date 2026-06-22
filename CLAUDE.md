@@ -49,7 +49,7 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
 ## 5. Estado actual
 
 **Fecha de actualización:** 2026-06-22
-**Fase:** 1 + 1.5 completas (camino caliente sobre infra real + endurecimiento). Próximo: Fase 2.
+**Fase:** 1 + 1.5 completas + ingesta desacoplada ([AUD-010](./AUDIT.md)). Próximo: Fase 2.
 
 ### Hecho
 - ✅ SAD v1.0.1 (ADR-001…011) + docs base. Repo en GitHub (12+ commits).
@@ -69,13 +69,15 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
   (await + coalescencia server-side + backpressure) · **auth de ingesta** (token + rate limit) ·
   **carga k6** + consumidores SQS en paralelo.
 
-### 🔴 Hallazgo abierto más importante (AUD-009, prueba de carga)
-Contra **LocalStack** el `/ingest` topa ~**1.000–1.300 ev/s** (NFR pide 5.000): bajo concurrencia
-la latencia explota (p95 34s). **La cola SQS queda en 0 y el worker drena** → el cuello es el
-**`PublishAsync` síncrono a SNS por request**, no el consumo. Remedios (orden de impacto):
-1) desacoplar el publish (`/ingest` encola y responde 202; publicador en background hace *batch*
-a SNS); 2) ingesta serverless (API GW+Lambda / Kinesis); 3) medir contra AWS real (LocalStack
-no representa throughput).
+### ✅ Hallazgo de carga de AUD-009 — RESUELTO ([AUD-010](./AUDIT.md))
+El cuello era el **`PublishAsync` síncrono a SNS por request** (p95 de `/ingest` = 34 s bajo
+concurrencia). Se **desacopló el publish** (remedio #2): `/ingest` encola en un canal acotado
+(`QueueingTelemetryPublisher`) y responde 202; un `SnsBatchPublisher` (BackgroundService) drena,
+coalesce (25 ms) y publica a SNS por **lotes** (`PublishBatch`, ≤10 msgs/llamada). **k6:** p95 de
+`/ingest` baja a **34 ms** (≈1000×), 0% error, sosteniendo ~5.000 ev/s contra LocalStack; E2E con
+cero pérdida (59.200/59.200). Deuda menor: reintento/persistencia ante `PublishBatch` fallido
+(hoy se loguea y se pierde). A escala real: medir contra AWS y, si hace falta, ingesta serverless
+(remedio #3, sin urgencia).
 
 ### Decisiones de implementación a recordar
 - **Flag `Telemetry:Transport`**: `Aws` en Development (pipeline real, requiere Docker arriba);
@@ -84,6 +86,8 @@ no representa throughput).
   (config `Ingest:Token`); el simulador lo manda con `--token`. Vacío en base = sin auth.
 - API en **puerto 3000** (`apps/api/Properties/launchSettings.json`, perfil `http`).
 - Worker: `Aws:Consumers` (consumidores SQS en paralelo). OTel exporta a consola en dev (10s).
+- **Ingesta desacoplada (AUD-010)**: `/ingest` solo encola (202); el `SnsBatchPublisher` publica a
+  SNS por lotes. Tunables en sección `Aws`: `PublisherQueueCapacity`, `MessageMaxEvents`, `FlushMilliseconds`.
 - Interfaces de extensión (para swaps sin reescribir): `ITelemetryPublisher`,
   `IDeviceStateRepository`, `IEventDeduplicator`, `ITelemetryBroadcaster`.
 - `nuget.config` en la raíz ([TS-004](./TROUBLESHOOTING.md#ts-004--dotnet-no-resuelve-paquetes-nuget-sin-fuentes)).
@@ -101,7 +105,8 @@ Verificación: `npx nx run-many -t build` · `nx test api-tests` · `npx nx run-
 Carga: ver [DEPLOY.md §1.6](./DEPLOY.md) (k6 vía Docker).
 
 ### Pendiente (próxima sesión)
-- **Resolver el cuello de botella de ingesta** (remedio #1: desacoplar publish a SNS con batch). ← alto valor.
+- ~~Resolver el cuello de botella de ingesta~~ ✅ HECHO ([AUD-010](./AUDIT.md): desacople + batch a SNS).
+  Deuda residual menor: reintento/persistencia ante `PublishBatch` fallido (hoy se loguea y se pierde).
 - **Fase 2**: alertas por umbral + read model de alertas; **S3 data lake** + tabla `telemetry`
   particionada (ADR-007); vistas históricas (camino frío).
 - Productivizar: infra con **CDK** (ADR-009); backplane nativo de SignalR + grupos por viewport
@@ -151,9 +156,8 @@ Pendiente de crear: infra como **AWS CDK** (ADR-009); S3 data lake + tabla `tele
 
 ## 7. Próximos pasos sugeridos (para la nueva sesión)
 
-1. **Leer este archivo + [AUD-008](./AUDIT.md) y [AUD-009](./AUDIT.md)** (backlog crítico y hallazgo de carga).
-2. **Desacoplar el publish a SNS** en `/ingest` (encolar + batch en background) para subir el
-   throughput de ingesta — es el cuello de botella medido.
+1. **Leer este archivo + [AUD-008](./AUDIT.md), [AUD-009](./AUDIT.md) y [AUD-010](./AUDIT.md)** (backlog crítico, hallazgo de carga y su cierre).
+2. ~~Desacoplar el publish a SNS~~ ✅ HECHO en [AUD-010](./AUDIT.md) (p95 de `/ingest`: 34 s → 34 ms).
 3. **Fase 2**: alertas por umbral + S3 data lake + telemetría particionada (ADR-007).
 4. Si se retoma la infra: pasar `awslocal` → **AWS CDK** (ADR-009).
 

@@ -43,7 +43,12 @@ if (useAws)
                 ServiceURL = aws.ServiceUrl,
                 AuthenticationRegion = aws.Region,
             }));
-    builder.Services.AddSingleton<ITelemetryPublisher, SnsTelemetryPublisher>();
+    // Ingesta desacoplada (AUD-009): /ingest encola y responde 202; el publicador en
+    // background drena el canal y manda a SNS por lotes (saca el round-trip del request).
+    builder.Services.AddSingleton<QueueingTelemetryPublisher>();
+    builder.Services.AddSingleton<ITelemetryPublisher>(sp =>
+        sp.GetRequiredService<QueueingTelemetryPublisher>());
+    builder.Services.AddHostedService<SnsBatchPublisher>();
     // El read model lo sirve Postgres (lo escribe el worker, ADR-005/008).
     builder.Services.AddAtalayaPersistence(builder.Configuration);
     // Push en vivo: el worker publica deltas en Redis; la API los reenvía por SignalR (ADR-002).

@@ -16,9 +16,15 @@ public sealed class HotPathTests : IClassFixture<WebApplicationFactory<Program>>
 
     public HotPathTests(WebApplicationFactory<Program> factory)
     {
-        // Fuerza el transporte in-memory: el test no depende de Docker/LocalStack.
+        // Fuerza el transporte in-memory (sin Docker/LocalStack) y desactiva la auth de
+        // ingesta (token vacío): este test cubre el camino caliente, no la seguridad.
+        // WebApplicationFactory arranca en entorno Development y cargaría el token de dev.
         _client = factory
-            .WithWebHostBuilder(b => b.UseSetting("Telemetry:Transport", "InMemory"))
+            .WithWebHostBuilder(b =>
+            {
+                b.UseSetting("Telemetry:Transport", "InMemory");
+                b.UseSetting("Ingest:Token", "");
+            })
             .CreateClient();
     }
 

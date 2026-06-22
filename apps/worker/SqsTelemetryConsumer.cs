@@ -18,7 +18,9 @@ public sealed class SqsTelemetryConsumer(
     AwsOptions options,
     IEventDeduplicator deduplicator,
     IDeviceStateRepository repository,
+    IAlertRepository alertRepository,
     ITelemetryBroadcaster broadcaster,
+    IAlertBroadcaster alertBroadcaster,
     WorkerMetrics metrics,
     ILogger<SqsTelemetryConsumer> logger) : BackgroundService
 {
@@ -92,6 +94,19 @@ public sealed class SqsTelemetryConsumer(
                 await broadcaster.PublishDeltasAsync(deltas, ct);
                 Interlocked.Add(ref _processed, fresh.Count);
                 metrics.AddProcessed(fresh.Count);
+
+                // Reglas por umbral (Fase 2): evalúa sobre los eventos frescos, persiste de forma
+                // idempotente y notifica solo las alertas realmente nuevas (ADR-005/006).
+                var raised = fresh.SelectMany(AlertRules.Evaluate).ToList();
+                if (raised.Count > 0)
+                {
+                    var newAlerts = await alertRepository.InsertAsync(raised, ct);
+                    if (newAlerts.Count > 0)
+                    {
+                        await alertBroadcaster.PublishAlertsAsync(newAlerts, ct);
+                        metrics.AddAlerts(newAlerts.Count);
+                    }
+                }
             }
 
             if (handled.Count > 0)

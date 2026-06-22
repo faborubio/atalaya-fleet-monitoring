@@ -17,6 +17,7 @@ public sealed class TelemetryProcessor(
     ITelemetryBus bus,
     IDeduplicator deduplicator,
     IDeviceStateStore store,
+    IAlertStore alertStore,
     IHubContext<TelemetryHub> hub,
     ILogger<TelemetryProcessor> logger) : BackgroundService
 {
@@ -27,18 +28,30 @@ public sealed class TelemetryProcessor(
         logger.LogInformation("TelemetryProcessor iniciado (modo dev: bus en memoria).");
         var reader = bus.Reader;
         var deltas = new List<DeviceState>(MaxBatch);
+        var fresh = new List<TelemetryEvent>(MaxBatch);
 
         while (await reader.WaitToReadAsync(stoppingToken))
         {
             deltas.Clear();
+            fresh.Clear();
             while (deltas.Count < MaxBatch && reader.TryRead(out var e))
             {
-                if (deduplicator.TryMarkProcessed(e.EventId))
-                    deltas.Add(store.Upsert(e));
+                if (!deduplicator.TryMarkProcessed(e.EventId)) continue;
+                deltas.Add(store.Upsert(e));
+                fresh.Add(e);
             }
 
             if (deltas.Count > 0)
                 await hub.Clients.All.SendAsync("devicesUpdated", deltas, stoppingToken);
+
+            // Reglas por umbral (Fase 2): idéntico al worker, pero sobre el store en memoria.
+            var raised = fresh.SelectMany(AlertRules.Evaluate).ToList();
+            if (raised.Count > 0)
+            {
+                var newAlerts = alertStore.Insert(raised);
+                if (newAlerts.Count > 0)
+                    await hub.Clients.All.SendAsync("alertsRaised", newAlerts, stoppingToken);
+            }
         }
     }
 }

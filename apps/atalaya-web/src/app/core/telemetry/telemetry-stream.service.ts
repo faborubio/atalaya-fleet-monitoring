@@ -8,6 +8,7 @@ import {
 import { Observable, Subject } from 'rxjs';
 import { API_CONFIG } from '../api.config';
 import { DeviceState } from '../models/device-state';
+import { Alert } from '../models/alert';
 
 /**
  * Capa de transporte del camino caliente (ADR-002): mantiene la conexión SignalR con
@@ -18,6 +19,7 @@ import { DeviceState } from '../models/device-state';
 export class TelemetryStreamService {
   private readonly config = inject(API_CONFIG);
   private readonly deltas = new Subject<DeviceState[]>();
+  private readonly alerts = new Subject<Alert[]>();
   private readonly connected = new Subject<void>();
   private connection?: HubConnection;
 
@@ -26,6 +28,9 @@ export class TelemetryStreamService {
 
   /** Lote de deltas tal como llegan del hub (`devicesUpdated`). */
   readonly deltas$: Observable<DeviceState[]> = this.deltas.asObservable();
+
+  /** Alertas nuevas tal como llegan del hub (`alertsRaised`). */
+  readonly alerts$: Observable<Alert[]> = this.alerts.asObservable();
 
   /**
    * Emite en cada (re)conexión exitosa. El store lo usa para re-sincronizar el snapshot
@@ -44,6 +49,10 @@ export class TelemetryStreamService {
 
     this.connection.on('devicesUpdated', (batch: DeviceState[]) =>
       this.deltas.next(batch)
+    );
+
+    this.connection.on('alertsRaised', (batch: Alert[]) =>
+      this.alerts.next(batch)
     );
 
     this.connection.onreconnecting(() => this.status.set(HubConnectionState.Reconnecting));

@@ -3,7 +3,12 @@
     <span class="shell__brand">🗼 {{ title }}</span>
     <nav class="shell__nav">
       @for (item of nav; track item.path) {
-        <a [routerLink]="item.path" routerLinkActive="is-active">{{ item.label }}</a>
+        <a [routerLink]="item.path" routerLinkActive="is-active">
+          {{ item.label }}
+          @if (item.path === 'alerts' && alerts.criticalCount() > 0) {
+            <span class="shell__badge">{{ alerts.criticalCount() }}</span>
+          }
+        </a>
       }
     </nav>
     <span class="shell__live" [class.is-live]="fleet.live()">

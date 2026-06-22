@@ -32,7 +32,8 @@ builder.Services.AddHostedService<SqsTelemetryConsumer>();
 
 var host = builder.Build();
 
-// El worker es dueño del read model: asegura el esquema al arrancar.
+// El worker es dueño de los read models: asegura los esquemas al arrancar.
 await host.Services.GetRequiredService<IDeviceStateRepository>().EnsureSchemaAsync();
+await host.Services.GetRequiredService<IAlertRepository>().EnsureSchemaAsync();
 
 host.Run();

@@ -49,7 +49,8 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
 ## 5. Estado actual
 
 **Fecha de actualización:** 2026-06-22
-**Fase:** 1 + 1.5 completas + ingesta desacoplada ([AUD-010](./AUDIT.md)). Próximo: Fase 2.
+**Fase:** 1 + 1.5 + ingesta desacoplada ([AUD-010](./AUDIT.md)) + **Fase 2 slice 1: alertas**
+([AUD-011](./AUDIT.md)). Próximo: Fase 2 slice 2 (camino frío: telemetry particionada + S3).
 
 ### Hecho
 - ✅ SAD v1.0.1 (ADR-001…011) + docs base. Repo en GitHub (12+ commits).
@@ -68,6 +69,11 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
   reconexión sin huecos · latencia P95 en dashboard + **OTel** en worker · push endurecido
   (await + coalescencia server-side + backpressure) · **auth de ingesta** (token + rate limit) ·
   **carga k6** + consumidores SQS en paralelo.
+- ✅ **Fase 2 — alertas por umbral** ([AUD-011](./AUDIT.md)): motor de reglas puro (`AlertRules`
+  en contracts) → read model `alerts` (Postgres, insert idempotente) → worker publica a canal
+  Redis `atalaya:alerts:new` → API `RedisAlertForwarder`→SignalR (`alertsRaised`) → feature
+  `alerts` (tabla en vivo + conteos, badge de críticas en nav). Paridad InMemory para tests.
+  Verificado E2E. Métrica `atalaya.alerts.raised`.
 
 ### ✅ Hallazgo de carga de AUD-009 — RESUELTO ([AUD-010](./AUDIT.md))
 El cuello era el **`PublishAsync` síncrono a SNS por request** (p95 de `/ingest` = 34 s bajo
@@ -88,8 +94,11 @@ cero pérdida (59.200/59.200). Deuda menor: reintento/persistencia ante `Publish
 - Worker: `Aws:Consumers` (consumidores SQS en paralelo). OTel exporta a consola en dev (10s).
 - **Ingesta desacoplada (AUD-010)**: `/ingest` solo encola (202); el `SnsBatchPublisher` publica a
   SNS por lotes. Tunables en sección `Aws`: `PublisherQueueCapacity`, `MessageMaxEvents`, `FlushMilliseconds`.
+- **Alertas (AUD-011)**: reglas en `AlertRules` (contracts, umbrales como constantes públicas).
+  Canal Redis de alertas `atalaya:alerts:new`; evento SignalR `alertsRaised`; endpoint `/api/alerts`.
+  Severidad string (`Warning`/`Critical`). En InMemory las dispara el `TelemetryProcessor`.
 - Interfaces de extensión (para swaps sin reescribir): `ITelemetryPublisher`,
-  `IDeviceStateRepository`, `IEventDeduplicator`, `ITelemetryBroadcaster`.
+  `IDeviceStateRepository`, `IAlertRepository`, `IEventDeduplicator`, `ITelemetryBroadcaster`, `IAlertBroadcaster`.
 - `nuget.config` en la raíz ([TS-004](./TROUBLESHOOTING.md#ts-004--dotnet-no-resuelve-paquetes-nuget-sin-fuentes)).
 
 ### Cómo levantar todo (pipeline real)
@@ -107,8 +116,10 @@ Carga: ver [DEPLOY.md §1.6](./DEPLOY.md) (k6 vía Docker).
 ### Pendiente (próxima sesión)
 - ~~Resolver el cuello de botella de ingesta~~ ✅ HECHO ([AUD-010](./AUDIT.md): desacople + batch a SNS).
   Deuda residual menor: reintento/persistencia ante `PublishBatch` fallido (hoy se loguea y se pierde).
-- **Fase 2**: alertas por umbral + read model de alertas; **S3 data lake** + tabla `telemetry`
-  particionada (ADR-007); vistas históricas (camino frío).
+- ~~Fase 2 — alertas por umbral + read model de alertas~~ ✅ HECHO ([AUD-011](./AUDIT.md)).
+- **Fase 2 slice 2 (camino frío)**: tabla `telemetry` particionada por tiempo + **S3 data lake**
+  (ADR-007); vista histórica (feature `history`) sobre Postgres. Athena = solo AWS real
+  (LocalStack community no lo trae), documentarlo como deuda.
 - Productivizar: infra con **CDK** (ADR-009); backplane nativo de SignalR + grupos por viewport
   (documentado en AUD-008 como opción, sin urgencia para flota completa).
 
@@ -124,11 +135,11 @@ atalaya/
 ├─ apps/
 │  ├─ atalaya-web/   # SPA Angular (shell + features lazy)
 │  ├─ simulator/     # generador de carga de telemetría (Node)
-│  ├─ api/           # .NET Minimal API + SignalR + ingesta(SNS) + forwarder Redis→SignalR + auth
-│  ├─ worker/        # .NET Worker: consume SQS (N consumidores) → dedup → Postgres → publica deltas; OTel
-│  └─ api.tests/     # xUnit, test de integración del camino caliente (InMemory)
-├─ libs/contracts/   # DTOs .NET compartidos (TelemetryEvent, DeviceState)
-├─ libs/persistence/ # read model en Postgres (Dapper/Npgsql)
+│  ├─ api/           # .NET Minimal API + SignalR + ingesta(SNS) + forwarders Redis→SignalR (deltas/alertas) + auth
+│  ├─ worker/        # .NET Worker: consume SQS → dedup → Postgres → deltas + reglas de alerta; OTel
+│  └─ api.tests/     # xUnit: integración camino caliente + alertas (InMemory) + reglas + batching SNS
+├─ libs/contracts/   # DTOs .NET compartidos (TelemetryEvent, DeviceState, Alert, AlertRules)
+├─ libs/persistence/ # read models en Postgres (device_state + alerts; Dapper/Npgsql)
 ├─ libs/realtime/    # Redis: dedup (ADR-006) + broadcaster pub/sub (ADR-002)
 ├─ infra/            # docker-compose (LocalStack+Redis+Postgres) + load/ingest.js (k6)
 ├─ Atalaya.sln, nuget.config
@@ -156,10 +167,12 @@ Pendiente de crear: infra como **AWS CDK** (ADR-009); S3 data lake + tabla `tele
 
 ## 7. Próximos pasos sugeridos (para la nueva sesión)
 
-1. **Leer este archivo + [AUD-008](./AUDIT.md), [AUD-009](./AUDIT.md) y [AUD-010](./AUDIT.md)** (backlog crítico, hallazgo de carga y su cierre).
+1. **Leer este archivo + [AUD-010](./AUDIT.md) y [AUD-011](./AUDIT.md)** (ingesta desacoplada + alertas).
 2. ~~Desacoplar el publish a SNS~~ ✅ HECHO en [AUD-010](./AUDIT.md) (p95 de `/ingest`: 34 s → 34 ms).
-3. **Fase 2**: alertas por umbral + S3 data lake + telemetría particionada (ADR-007).
-4. Si se retoma la infra: pasar `awslocal` → **AWS CDK** (ADR-009).
+3. ~~Fase 2 — alertas por umbral~~ ✅ HECHO en [AUD-011](./AUDIT.md).
+4. **Fase 2 slice 2 (camino frío)**: tabla `telemetry` particionada + S3 data lake + vista histórica
+   (feature `history`) sobre Postgres; Athena documentado como solo-AWS-real (ADR-007).
+5. Si se retoma la infra: pasar `awslocal` → **AWS CDK** (ADR-009).
 
 > Al cerrar cada sesión: actualiza §5 (estado), añade entrada en AUDIT.md si hubo cambio
 > auditable, y registra en TROUBLESHOOTING.md cualquier error resuelto.

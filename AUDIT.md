@@ -36,6 +36,59 @@ proyecto.
 
 ---
 
+## AUD-011 — Fase 2 (slice 1): alertas por umbral end-to-end (2026-06-22)
+
+**Fase:** Fase 2 — Alertas (primer vertical slice del roadmap SAD §10).
+**Alcance:** Reglas por umbral → read model `alerts` → notificación en vivo → UI de alertas.
+**Auditor:** Fabián Rubio + Claude
+
+### Qué se hizo
+
+Vertical slice completo del NFR estrella ("alertas en sub-segundos"), reusando el camino
+caliente ya endurecido (ADR-001/002/005/006):
+
+- **Motor de reglas** (`AlertRules` en contracts, puro): umbrales de temperatura de motor,
+  combustible y velocidad, cada uno con nivel aviso/crítico. `AlertId` determinista
+  (`{eventId}:{rule}`) para idempotencia (ADR-006).
+- **Read model `alerts`** (Postgres, `PostgresAlertRepository`): inserción por lote con
+  `unnest` + `ON CONFLICT (alert_id) DO NOTHING RETURNING` → idempotente y devuelve solo las
+  alertas nuevas (las que hay que notificar). Snapshot `GetRecentAsync`.
+- **Worker**: tras dedup, evalúa reglas sobre eventos frescos → inserta → publica las nuevas a
+  un canal Redis propio (`RedisAlertBroadcaster`, `atalaya:alerts:new`) → métrica OTel
+  `atalaya.alerts.raised`.
+- **API**: `RedisAlertForwarder` reenvía Redis→SignalR (`alertsRaised`, sin coalescencia: bajo
+  volumen, máxima prontitud); endpoint `GET /api/alerts`. **Paridad InMemory** (`IAlertStore`)
+  para dev sin Docker y tests: el `TelemetryProcessor` dispara las mismas reglas.
+- **Frontend**: `AlertStore` (signals, fuera del NgRx Store — ADR-003; dedup por `alertId`,
+  snapshot al (re)conectar + vivo), feature `alerts` (tabla en vivo + conteos por severidad),
+  badge de críticas en la nav. `AlertSeverity` serializa como string en todo el cableado.
+
+### Hallazgos
+
+| Sev | Hallazgo | Acción | Estado |
+|-----|----------|--------|--------|
+| ✅  | Alertas E2E sobre el camino caliente real | reglas → `alerts` → SignalR → UI | Resuelto |
+| 🔵  | El stub del shell no proveía `AlertStore` (nuevo inject) → test del shell roto | Stub añadido en `app.spec.ts` | Resuelto |
+| 🟡  | El simulador no genera valores en rango crítico (solo aviso); lo crítico solo se ve por unit test | Aceptable; los umbrales crít. están cubiertos en `AlertRulesTests` | Abierto (cosmético) |
+
+### Verificaciones
+
+- [x] `nx run-many -t build` (5 proyectos) ✅ · `nx run-many -t lint test` ✅
+- [x] `nx test api-tests`: **15/15** (incluye 9 de `AlertRules` + 1 de integración InMemory de `/api/alerts`).
+- [x] **E2E** (API+worker en Aws, simulador 1.000 ev/s × 10 s): worker `atalaya.alerts.raised`
+      poblado, `RedisAlertForwarder` activo, `GET /api/alerts` devuelve alertas con reglas/severidad
+      correctas (engine-temp-high / fuel-low / overspeed).
+
+### Conclusión
+
+Primer slice de Fase 2 cerrado: las alertas viajan del evento al dashboard por el mismo pipeline
+desacoplado e idempotente del camino caliente, con read model propio y notificación en vivo.
+Falta el segundo vertical (camino frío: `telemetry` particionada + S3 data lake + vista histórica).
+
+**Veredicto:** ✅ Fase 2 — alertas completas y verificadas.
+
+---
+
 ## AUD-010 — Desacople del publish a SNS en `/ingest` (2026-06-22)
 
 **Fase:** Cierre del hallazgo 🔴 de [AUD-009](#aud-009--fase-15-endurecimiento--hallazgo-de-prueba-de-carga-2026-06-22) (remedio #2).

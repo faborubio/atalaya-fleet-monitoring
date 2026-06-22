@@ -4,13 +4,19 @@ import { provideRouter } from '@angular/router';
 import { App } from './app';
 import { appRoutes } from './app.routes';
 import { FleetStore } from './core/telemetry/fleet-store';
+import { AlertStore } from './core/telemetry/alert-store';
 
-/** Stub del store: evita abrir SignalR/HTTP en tests del shell. */
+/** Stubs de los stores: evitan abrir SignalR/HTTP en tests del shell. */
 const fleetStub: Partial<FleetStore> = {
   live: signal(false),
   count: signal(0) as unknown as FleetStore['count'],
   eventsPerSec: signal(0),
   start: async () => void 0,
+};
+
+const alertStub: Partial<AlertStore> = {
+  criticalCount: signal(0) as unknown as AlertStore['criticalCount'],
+  start: () => void 0,
 };
 
 describe('App', () => {
@@ -20,6 +26,7 @@ describe('App', () => {
       providers: [
         provideRouter(appRoutes),
         { provide: FleetStore, useValue: fleetStub },
+        { provide: AlertStore, useValue: alertStub },
       ],
     }).compileComponents();
   });

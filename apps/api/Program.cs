@@ -51,14 +51,16 @@ if (useAws)
     builder.Services.AddHostedService<SnsBatchPublisher>();
     // El read model lo sirve Postgres (lo escribe el worker, ADR-005/008).
     builder.Services.AddAtalayaPersistence(builder.Configuration);
-    // Push en vivo: el worker publica deltas en Redis; la API los reenvía por SignalR (ADR-002).
+    // Push en vivo: el worker publica deltas/alertas en Redis; la API los reenvía por SignalR (ADR-002).
     builder.Services.AddAtalayaRedis(builder.Configuration);
     builder.Services.AddHostedService<RedisDeltaForwarder>();
+    builder.Services.AddHostedService<RedisAlertForwarder>();
 }
 else
 {
     // El procesamiento corre en proceso (ADR-008 lo mueve al worker en modo Aws).
     builder.Services.AddSingleton<IDeviceStateStore, InMemoryDeviceStateStore>();
+    builder.Services.AddSingleton<IAlertStore, InMemoryAlertStore>();
     builder.Services.AddSingleton<ITelemetryBus, InMemoryTelemetryBus>();
     builder.Services.AddSingleton<ITelemetryPublisher, InMemoryTelemetryPublisher>();
     builder.Services.AddSingleton<IDeduplicator, InMemoryDeduplicator>();
@@ -75,7 +77,10 @@ builder.Services.AddCors(options => options.AddPolicy(DevCors, policy => policy
 var app = builder.Build();
 
 if (useAws)
+{
     await app.Services.GetRequiredService<IDeviceStateRepository>().EnsureSchemaAsync();
+    await app.Services.GetRequiredService<IAlertRepository>().EnsureSchemaAsync();
+}
 
 app.UseCors(DevCors);
 app.UseRateLimiter();
@@ -97,10 +102,17 @@ app.MapPost("/ingest", async (
 
 // Snapshot del read model: lo que el dashboard pide al cargar (camino caliente, ADR-005).
 if (useAws)
+{
     app.MapGet("/api/devices", async (IDeviceStateRepository repo, CancellationToken ct) =>
         Results.Ok(await repo.GetAllAsync(ct)));
+    app.MapGet("/api/alerts", async (IAlertRepository repo, CancellationToken ct) =>
+        Results.Ok(await repo.GetRecentAsync(100, ct)));
+}
 else
+{
     app.MapGet("/api/devices", (IDeviceStateStore store) => Results.Ok(store.Snapshot()));
+    app.MapGet("/api/alerts", (IAlertStore store) => Results.Ok(store.Snapshot()));
+}
 
 // Hub de deltas en vivo (ADR-002).
 app.MapHub<TelemetryHub>("/hubs/telemetry");

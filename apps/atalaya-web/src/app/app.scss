@@ -74,6 +74,19 @@
     }
   }
 
+  &__badge {
+    display: inline-block;
+    margin-left: 0.35rem;
+    padding: 0 0.4rem;
+    min-width: 1.1rem;
+    border-radius: 999px;
+    background: #da3633;
+    color: #fff;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-align: center;
+  }
+
   &__content {
     flex: 1;
     padding: 1.5rem;

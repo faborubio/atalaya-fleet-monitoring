@@ -14,6 +14,7 @@ public static class ServiceCollectionExtensions
         services.Configure<PostgresOptions>(o =>
             o.ConnectionString = configuration.GetConnectionString("Postgres") ?? string.Empty);
         services.AddSingleton<IDeviceStateRepository, PostgresDeviceStateRepository>();
+        services.AddSingleton<IAlertRepository, PostgresAlertRepository>();
         return services;
     }
 }

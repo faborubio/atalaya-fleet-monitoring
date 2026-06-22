@@ -138,6 +138,9 @@ Carga: ver [DEPLOY.md §1.6](./DEPLOY.md) (k6 vía Docker).
 - ~~Grupos por viewport en SignalR (AUD-008)~~ ✅ HECHO ([AUD-014](./AUDIT.md)): push O(viewport),
   opt-in sin regresión (firehose por defecto); control Todo/2×/4× en el dashboard.
 - **Productivizar (resto)**: **Athena** sobre el data lake S3 (solo AWS real, pendiente de cuenta).
+- **Revisión crítica [AUD-015](./AUDIT.md)** (ojo a producción tras Fase 2). Top: alertas como
+  **incidentes** (no por-evento), **retención por DROP PARTITION**, **idempotencia S3** del data lake,
+  durabilidad del borde de ingesta, Testcontainers del SQL frío. → candidata "Fase 2.5 calidad de datos".
 - Deuda menor: reintento/persistencia ante `PublishBatch` fallido (AUD-010); el simulador no genera
   valores de alerta crítica (solo aviso), lo crítico solo se ve por unit test (AUD-011).
 

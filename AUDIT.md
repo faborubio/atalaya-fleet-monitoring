@@ -36,6 +36,105 @@ proyecto.
 
 ---
 
+## AUD-015 — Revisión crítica tras Fase 2 + productivización: brechas y mejores ideas (2026-06-22)
+
+**Tipo:** Auditoría retrospectiva (no de ejecución), homóloga de
+[AUD-008](#aud-008--revisión-crítica-de-fases-01-brechas-con-producción-y-mejoras-2026-06-22).
+Mira con ojo crítico lo construido **desde** AUD-008 (Fase 1.5, Fase 2, CDK, viewport):
+qué se rompería en producción, qué duele al escalar, qué ideas son mejores.
+**Alcance:** Estado actual completo del sistema.
+**Auditor:** Fabián Rubio + Claude
+
+### Qué cerró AUD-008 (para no repetir)
+
+✅ Auth de ingesta (token+rate limit) · ✅ latencia P95 + OTel · ✅ reconexión sin huecos ·
+✅ grupos por viewport ([AUD-014](#aud-014--productivización-grupos-por-viewport-en-signalr-2026-06-22)) ·
+✅ carga k6 + consumidores en paralelo · ✅ camino frío telemetry+S3 ([AUD-012](#aud-012--fase-2-slice-2-camino-frío--telemetría-particionada--s3-data-lake-2026-06-22)) ·
+✅ IaC con CDK ([AUD-013](#aud-013--productivización-infraestructura-como-código-con-aws-cdk-2026-06-22)).
+
+### Leyenda de prioridad
+🔴 Bloqueante para producción · 🟠 Importante (escala/seguridad/datos) · 🟡 Deseable · 🔵 Pulido
+
+---
+
+### A. Alertas — el mayor "demo vs realidad" de Fase 2
+
+| Pri | Brecha (hoy) | Dificultad real | Idea mejor |
+|-----|--------------|-----------------|------------|
+| 🔴 | **Alerta por-evento, no por-incidente**: `AlertRules.Evaluate` dispara en *cada* evento que cruza el umbral; `alertId={eventId}:{rule}` hace cada una distinta | Un dispositivo a 96 °C reportando a 10 Hz genera **10 alertas/seg** de la misma condición → tabla y dashboard inundados, ruido inservible | **Modelo de incidente** con estado: clave por `(deviceId, rule)`, abre/cierra; solo las **transiciones** crean filas. Histéresis (abrir a 95, cerrar a 90) para evitar *flapping* |
+| 🟠 | Sin **ack/resolución** ni notificación externa (solo push al dashboard) | "Notificadas en sub-segundos" se cumple en la UI, pero no hay operación (silenciar/resolver) ni canal (email/SNS→SMS) | Estado `acknowledged/resolved` + endpoint de ack; SNS topic de notificaciones para fan-out a email/SMS |
+| 🟡 | Umbrales **hardcodeados** en `AlertRules` (constantes) | No se pueden ajustar por flota/dispositivo sin recompilar | Reglas configurables (tabla/JSON) por flota; recarga en caliente |
+
+### B. Durabilidad e idempotencia del dato
+
+| Pri | Brecha (hoy) | Dificultad real | Idea mejor |
+|-----|--------------|-----------------|------------|
+| 🟠 | **Borde de ingesta at-most-once** (efecto de [AUD-010](#aud-010--desacople-del-publish-a-sns-en-ingest-2026-06-22)): `/ingest` responde 202 desde un canal **en memoria**; un crash de la API pierde lo *buffered* (antes el publish síncrono daba garantía al request) | Se cambió durabilidad por latencia; bajo despliegue/caída se pierden eventos aceptados | **API Gateway → SNS** (service integration, sin proceso propio): durable **y** baja latencia; o WAL local antes del 202 |
+| 🟠 | **Data lake S3 sin dedup**: el dedup vive en Redis (preventivo, TTL); a *at-least-once* el `AppendAsync` a S3 **no es idempotente** (cada reentrega/fallo parcial = objeto nuevo con los mismos eventos) | Reentrega tardía (post-TTL) o crash entre S3 y `DeleteMessageBatch` → **duplicados en el lake** → Athena doble-cuenta | Clave S3 derivada del **hash del contenido** (idempotente), o `SELECT DISTINCT` por `event_id` en Athena/consultas |
+| 🟡 | Worker escribe device_state + alerts + telemetry + S3 + broadcast **sin transacción**; borra el mensaje al final | Un fallo a mitad reprocesa todo (idempotente salvo S3) | Aceptable con efectos idempotentes; documentar el orden y hacer S3 idempotente (arriba) |
+
+### C. Camino frío — la retención prometida no está cableada
+
+| Pri | Brecha (hoy) | Dificultad real | Idea mejor |
+|-----|--------------|-----------------|------------|
+| 🟠 | **Retención O(1) anunciada pero no implementada**: se crean particiones diarias, pero **nadie hace `DROP PARTITION`** de las viejas | La tabla `telemetry` crece sin fin; el beneficio estrella del particionado (ADR-007) no se materializa | Job programado (timer en worker / `pg_cron`) que dropea particiones > N días. El lifecycle S3 (IA→Glacier) ya quedó en el CDK |
+| 🟡 | `/api/history` devuelve **crudo** (cap 5.000), sin agregación | Un rango de 30 días pide millones de puntos; el SAD habla de "promedio histórico" / continuous aggregates | **Downsampling** server-side (avg/min/max por bucket); evaluar TimescaleDB (hypertables + continuous aggregates) |
+
+### D. Seguridad (parcial desde AUD-008)
+
+| Pri | Brecha (hoy) | Dificultad real | Idea mejor |
+|-----|--------------|-----------------|------------|
+| 🟠 | **Token de ingesta único compartido** (no por dispositivo) | Un token filtrado compromete toda la flota; sin revocación granular | Token/credencial **por dispositivo** (o mTLS / SigV4); rotación |
+| 🟠 | **Lecturas sin autenticación**: `/api/devices|alerts|history` y el hub son abiertos (CORS a localhost) | Cualquiera lee la telemetría de la flota | **OIDC/JWT** en la API y el hub; autorización por flota/tenant |
+| 🔵 | Secretos en `appsettings` (dev) | En prod, secretos en claro | Secrets Manager/SSM; el CDK puede inyectarlos |
+
+### E. Operación y resiliencia
+
+| Pri | Brecha (hoy) | Dificultad real | Idea mejor |
+|-----|--------------|-----------------|------------|
+| 🟠 | **Sin readiness real**: `/health` no comprueba Postgres/Redis/SQS; el worker no expone health | En un orquestador no hay rolling deploy sano; arranca aunque las deps no estén | Health **gateado por dependencias** + readiness separado de liveness |
+| 🟡 | **Sin graceful shutdown**: el buffer de `/ingest` y los lotes en vuelo del worker se pierden/reprocesan al SIGTERM | Despliegues pierden lo buffered (atado a B) | Cancelación cooperativa + drenar el canal antes de cerrar |
+| 🟡 | **DLQ sin replay** (ya en CDK) ni backoff/circuit-breaker explícito | Mensajes envenenados se acumulan sin operación | Herramienta de replay de DLQ; backoff+jitter |
+
+### F. Pruebas
+
+| Pri | Brecha (hoy) | Dificultad real | Idea mejor |
+|-----|--------------|-----------------|------------|
+| 🟠 | **El SQL del camino frío no tiene test automatizado**: particionado, `unnest`, `ON CONFLICT`, creación perezosa de particiones solo se verificaron a mano | Una regresión en el DDL/queries no la atrapa CI (los tests usan InMemory) | **Testcontainers** (Postgres real) para `PostgresTelemetryArchive`/`PostgresAlertRepository` |
+| 🟡 | Frontend: sin tests de `FleetStore`/`AlertStore`/viewport ni E2E | Lógica de coalescencia/dedup/viewport sin red de seguridad | Unit de stores (signals) + **Playwright** del flujo (ver flota → alerta → histórico) |
+
+### G. Frontend y varios (heredado de AUD-008, sigue abierto)
+
+| Pri | Brecha (hoy) | Idea mejor |
+|-----|--------------|------------|
+| 🟡 | Mapa = scatter en canvas (sin geografía) | **deck.gl / Mapbox GL** con clustering por viewport |
+| 🟡 | Tabla cap 200 filas, sin virtual scroll | CDK Virtual Scroll + paginación server-side |
+| 🔵 | API URL hardcodeada (`devApiConfig`); CDK single-env | Config por entorno; parametrizar stacks dev/staging/prod |
+
+---
+
+### Top 5 mejoras priorizadas (mayor valor / acercan a la realidad)
+
+1. 🔴 **Alertas como incidentes** (estado abrir/cerrar + histéresis): elimina el ruido y es lo que distingue un alertado real de un contador de cruces de umbral.
+2. 🟠 **Retención por `DROP PARTITION`** (job programado): materializa el beneficio estrella de ADR-007 que hoy solo está descrito.
+3. 🟠 **Idempotencia del data lake S3** (clave por hash de contenido): cierra la duplicación silenciosa del camino frío bajo at-least-once.
+4. 🟠 **Durabilidad del borde de ingesta** (API GW→SNS o WAL local): recupera la garantía que AUD-010 cambió por latencia, sin volver al cuello de botella.
+5. 🟠 **Testcontainers** para el SQL del camino frío/alertas: el código Postgres real hoy no tiene red de seguridad en CI.
+
+### Diferencias clave "demo vs realidad" (resumen honesto)
+
+Tras Fase 2 + productivización, el sistema ya **mide, escala el push, persiste el histórico y
+está como IaC**. Las brechas restantes no son "más features", son **calidad de datos y operación**:
+las alertas son por-evento (no incidentes), el data lake puede duplicar, la retención está descrita
+pero no ejecutándose, y la durabilidad del borde se cambió por latencia. Son exactamente los puntos
+finos que separan una arquitectura demostrada de una operada en producción.
+
+**Veredicto:** ✅ Base madura y honesta. Recomendación: una **Fase 2.5 de calidad de datos**
+(Top 1–3) tiene más valor que nuevas features; el resto (seguridad fina, Testcontainers, deck.gl)
+es endurecimiento incremental.
+
+---
+
 ## AUD-014 — Productivización: grupos por viewport en SignalR (2026-06-22)
 
 **Fase:** Productivización (cierra el Top de [AUD-008](#aud-008--revisión-crítica-de-fases-01-brechas-con-producción-y-mejoras-2026-06-22)).

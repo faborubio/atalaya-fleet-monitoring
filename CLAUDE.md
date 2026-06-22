@@ -17,6 +17,9 @@ de Angular/.NET/AWS event-driven.
 **Documento rector:** [SAD-Atalaya.md](./SAD-Atalaya.md) — léelo; cada decisión es un ADR
 con contexto y trade-offs. Si una decisión nueva surge, se añade como ADR al SAD.
 
+**Repositorio:** https://github.com/faborubio/atalaya-fleet-monitoring (público, rama `main`).
+El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH cargada en esta máquina.
+
 ## 2. Quién
 
 - **Autor:** Fabián Rubio — Full Stack, foco Frontend/Angular.

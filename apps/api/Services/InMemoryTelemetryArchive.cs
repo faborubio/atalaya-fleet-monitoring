@@ -50,4 +50,9 @@ public sealed class InMemoryTelemetryArchive : ITelemetryArchive
 
         return Task.FromResult<IReadOnlyList<TelemetryEvent>>(result);
     }
+
+    // Sin particiones en memoria: la retención no aplica en modo dev/tests.
+    public Task<IReadOnlyList<string>> DropPartitionsBeforeAsync(
+        DateOnly cutoff, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<string>>([]);
 }

@@ -20,4 +20,11 @@ public interface ITelemetryArchive
     Task<IReadOnlyList<TelemetryEvent>> QueryAsync(
         string deviceId, DateTimeOffset from, DateTimeOffset to, int limit = 1000,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Retención O(1) (ADR-007, AUD-015 p2): elimina las particiones diarias anteriores a
+    /// <paramref name="cutoff"/> (DROP, no DELETE). Devuelve las particiones eliminadas.
+    /// </summary>
+    Task<IReadOnlyList<string>> DropPartitionsBeforeAsync(
+        DateOnly cutoff, CancellationToken ct = default);
 }

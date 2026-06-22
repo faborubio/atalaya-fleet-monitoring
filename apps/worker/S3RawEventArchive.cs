@@ -1,5 +1,3 @@
-using System.Text;
-using System.Text.Json;
 using Amazon.S3;
 using Amazon.S3.Model;
 using Atalaya.Contracts;
@@ -9,14 +7,13 @@ namespace Atalaya.Worker;
 
 /// <summary>
 /// Data lake en S3 (ADR-007): vuelca cada lote crudo como un objeto JSON inmutable bajo una
-/// partición por fecha de ingesta <c>raw/yyyy/MM/dd/</c>. Es la fuente de verdad fría y la base de
-/// Athena en AWS real. En dev corre contra LocalStack; el bucket lo crea el init de LocalStack,
-/// pero <see cref="EnsureBucketAsync"/> lo asegura igual (idempotente).
+/// partición por fecha <c>raw/yyyy/MM/dd/</c>. La clave se deriva del <b>hash del contenido</b>
+/// (<see cref="RawEventKey"/>, AUD-015 p3): una reentrega del mismo lote sobrescribe el mismo
+/// objeto en vez de duplicarlo. Es la fuente de verdad fría y la base de Athena en AWS real.
+/// El bucket lo crea el init de LocalStack, pero <see cref="EnsureBucketAsync"/> lo asegura igual.
 /// </summary>
 public sealed class S3RawEventArchive(IAmazonS3 s3, AwsOptions options) : IRawEventArchive
 {
-    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
-
     public async Task EnsureBucketAsync(CancellationToken ct = default)
     {
         try
@@ -34,9 +31,7 @@ public sealed class S3RawEventArchive(IAmazonS3 s3, AwsOptions options) : IRawEv
     {
         if (events.Count == 0) return;
 
-        var now = DateTimeOffset.UtcNow;
-        var key = $"raw/{now:yyyy/MM/dd}/{now:HHmmssfff}-{Guid.NewGuid():N}.json";
-        var body = JsonSerializer.Serialize(events, Json);
+        var (key, body) = RawEventKey.Build(events); // clave idempotente por hash de contenido
 
         await s3.PutObjectAsync(new PutObjectRequest
         {

@@ -43,6 +43,11 @@ builder.Services.AddAtalayaPersistence(builder.Configuration);
 builder.Services.AddAtalayaRedis(builder.Configuration);
 builder.Services.AddHostedService<SqsTelemetryConsumer>();
 
+// Retención del camino frío (AUD-015 p2): dropea particiones viejas de telemetry.
+builder.Services.AddSingleton(
+    builder.Configuration.GetSection("Retention").Get<RetentionOptions>() ?? new RetentionOptions());
+builder.Services.AddHostedService<PartitionRetentionService>();
+
 var host = builder.Build();
 
 // El worker es dueño de los read models y del camino frío: asegura esquemas y bucket al arrancar.

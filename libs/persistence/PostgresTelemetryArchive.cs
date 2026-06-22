@@ -109,13 +109,38 @@ public sealed class PostgresTelemetryArchive(IOptions<PostgresOptions> options) 
         return rows;
     }
 
+    public async Task<IReadOnlyList<string>> DropPartitionsBeforeAsync(
+        DateOnly cutoff, CancellationToken ct = default)
+    {
+        await using var conn = new NpgsqlConnection(_cs);
+        await conn.OpenAsync(ct);
+
+        // Particiones actuales de 'telemetry'.
+        var names = (await conn.QueryAsync<string>(new CommandDefinition(
+            "SELECT inhrelid::regclass::text FROM pg_inherits WHERE inhparent = 'telemetry'::regclass;",
+            cancellationToken: ct))).ToList();
+
+        var dropped = new List<string>();
+        foreach (var name in names)
+        {
+            var date = PartitionName.DateOf(name.Split('.').Last()); // puede venir con esquema
+            if (date is null || date >= cutoff) continue;
+
+            // Nombre validado (telemetry_pYYYYMMDD): seguro para interpolar.
+            await conn.ExecuteAsync(new CommandDefinition(
+                $"DROP TABLE IF EXISTS {PartitionName.ForDate(date.Value)};", cancellationToken: ct));
+            dropped.Add(PartitionName.ForDate(date.Value));
+        }
+        return dropped;
+    }
+
     /// <summary>
     /// Crea la partición diaria <c>telemetry_pYYYYMMDD</c> si falta. Idempotente y tolerante a
     /// carreras entre consumidores en paralelo (ignora "ya existe").
     /// </summary>
     private static async Task EnsurePartitionAsync(NpgsqlConnection conn, DateOnly date, CancellationToken ct)
     {
-        var name = $"telemetry_p{date:yyyyMMdd}";
+        var name = PartitionName.ForDate(date);
         var from = date.ToString("yyyy-MM-dd");
         var to = date.AddDays(1).ToString("yyyy-MM-dd");
         var ddl = $"""

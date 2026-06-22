@@ -36,6 +36,50 @@ proyecto.
 
 ---
 
+## AUD-016 — Fase 2.5 (parte 1): retención por DROP PARTITION + data lake S3 idempotente (2026-06-22)
+
+**Fase:** Fase 2.5 — Calidad de datos (puntos 2 y 3 de [AUD-015](#aud-015--revisión-crítica-tras-fase-2--productivización-brechas-y-mejores-ideas-2026-06-22)).
+**Alcance:** Camino frío: retención real de particiones + idempotencia del data lake.
+**Auditor:** Fabián Rubio + Claude
+
+### Qué se hizo
+
+- **Retención O(1) cableada** (AUD-015 p2): `ITelemetryArchive.DropPartitionsBeforeAsync(cutoff)`
+  (Postgres: lista `pg_inherits`, parsea la fecha del nombre y `DROP TABLE` las viejas) +
+  `PartitionRetentionService` (BackgroundService en el worker): pasada al arrancar y cada
+  `Retention:IntervalHours` (6 h), conserva `Retention:Days` (30) días. Convención de nombres en
+  `PartitionName` (testeable). Antes el particionado existía pero **nadie dropeaba** → el beneficio
+  estrella de ADR-007 no se materializaba.
+- **Data lake S3 idempotente** (AUD-015 p3): la clave del objeto se deriva del **hash del
+  contenido** (`RawEventKey`: `raw/yyyy/MM/dd/{sha256(body)}.json`, fecha del evento más antiguo).
+  Una reentrega del mismo lote (at-least-once) sobrescribe el mismo objeto en vez de duplicar.
+
+### Hallazgos
+
+| Sev | Hallazgo | Acción | Estado |
+|-----|----------|--------|--------|
+| 🟠  | Retención descrita pero no ejecutándose | Job de `DROP PARTITION` en el worker | Resuelto |
+| 🟠  | Data lake S3 no idempotente (dups bajo at-least-once) | Clave por hash de contenido | Resuelto |
+| 🔵  | El separador `/` en un format de fecha es sensible a cultura (salía `-`) | Escapado `yyyy'/'MM'/'dd`; partición SQL ya usaba `-` literal | Resuelto |
+
+### Verificaciones
+
+- [x] `nx test api-tests`: **28/28** (+`RawEventKeyTests` ×3, +`PartitionNameTests` ×3). `nx run-many -t lint test build` ✅
+- [x] **E2E retención**: creada `telemetry_p20200101`; al reiniciar el worker → log
+      `Retención: 1 particiones eliminadas (< 05/23/2026): telemetry_p20200101`; psql confirma que
+      solo queda la partición de hoy.
+- [x] **E2E S3**: tras ingestar, los objetos son `raw/2026/06/22/{sha256}.json` (clave por contenido).
+
+### Conclusión
+
+El camino frío gana calidad de datos: la retención por particiones ya **se ejecuta** (no solo está
+descrita) y el data lake deja de poder duplicar bajo reentrega. Falta el punto 1 (alertas como
+incidentes), el de mayor impacto.
+
+**Veredicto:** ✅ AUD-015 puntos 2 y 3 cerrados.
+
+---
+
 ## AUD-015 — Revisión crítica tras Fase 2 + productivización: brechas y mejores ideas (2026-06-22)
 
 **Tipo:** Auditoría retrospectiva (no de ejecución), homóloga de

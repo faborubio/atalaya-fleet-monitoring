@@ -36,6 +36,103 @@ proyecto.
 
 ---
 
+## AUD-008 — Revisión crítica de Fases 0–1: brechas con producción y mejoras (2026-06-22)
+
+**Tipo:** Auditoría retrospectiva (no de ejecución). Mira lo construido con ojo crítico:
+qué se rompería en el mundo real, qué duele al escalar y qué ideas mejores acercan el
+sistema a producción. Las entradas AUD-001…007 registran *qué* se hizo; esta registra
+*qué le falta y cómo mejorarlo*.
+**Alcance:** Todo lo implementado hasta hoy (scaffold, camino caliente sobre infra real).
+**Auditor:** Fabián Rubio + Claude
+
+### Leyenda de prioridad
+🔴 Bloqueante para producción · 🟠 Importante (escala/seguridad) · 🟡 Deseable · 🔵 Pulido
+
+---
+
+### A. Ingesta y seguridad
+
+| Pri | Brecha (hoy) | Dificultad real | Idea mejor |
+|-----|--------------|-----------------|------------|
+| 🔴 | **`/ingest` sin autenticación**: cualquiera puede inyectar telemetría | Dispositivos falsos, envenenamiento de datos, DoS | Tokens de ingesta por dispositivo + rate limiting; usuarios con OIDC/JWT (SAD §8) |
+| 🟠 | La **API hace REST + ingesta + SignalR** en el mismo proceso | La ingesta compite con las lecturas/push; no escalan por separado | Servicio/Lambda de ingesta dedicado tras API Gateway (como en el SAD §4.1); la API solo lectura+hub |
+| 🟠 | Ingesta publica a **SNS standard** (sin orden, sin FIFO) | Eventos desordenados entre mensajes; sólo el guard `seq` salva el read model | SQS **FIFO** (o partición por `deviceId`) donde el orden importe (alertas, telemetría cruda) |
+| 🟡 | Payload sin validación de esquema ni límites de tamaño/lote | Mensajes gigantes o malformados degradan el worker | Validación + límite de tamaño en el borde; rechazo temprano |
+
+### B. Procesamiento y escalado (worker)
+
+| Pri | Brecha (hoy) | Dificultad real | Idea mejor |
+|-----|--------------|-----------------|------------|
+| 🟠 | **Un solo consumidor**, bucle secuencial de SQS | No sostiene 5.000 ev/s; sin autoescalado por profundidad de cola (ADR-008) | Varios consumidores/instancias; recepción en paralelo; autoescalar por `ApproximateNumberOfMessages` |
+| 🟠 | **Dedup en Redis preventivo**: el upsert ya es idempotente; el dedup sólo importará para efectos no idempotentes (S3, disparo de alertas) que aún no existen | TTL 1h: una reentrega tras 1h (DLQ replay, visibility) se reprocesaría | Atar TTL a la ventana real de reentrega; aplicar dedup donde haya efectos no idempotentes |
+| 🟡 | Upsert abre conexión por ciclo (pooling de Npgsql implícito) | Bajo carga, picos de latencia si el pool no está afinado | Afinar pool; considerar `COPY`/Timescale para volumen; medir |
+| 🔵 | Sin *graceful shutdown* que drene en vuelo | Al reiniciar, mensajes en proceso vuelven a la cola (ok) pero sin orden de drenado | Cancelación cooperativa + drenado al recibir SIGTERM |
+
+### C. Tiempo real (SignalR)
+
+| Pri | Brecha (hoy) | Dificultad real | Idea mejor |
+|-----|--------------|-----------------|------------|
+| 🟠 | **Broadcast a `Clients.All`**: cada cliente recibe TODA la flota, aunque el hub ya tiene `Subscribe/Unsubscribe` por grupo (sin usar) | Con cientos de dispositivos y muchos clientes, ancho de banda y render desperdiciados (ADR-002) | Suscripción por **grupo de dispositivos visibles** (viewport); el worker/forwarder publica por grupo |
+| 🟠 | **Puente Redis pub/sub** en vez del **backplane nativo** de SignalR | Funciona, pero reimplementa lo que SignalR ya resuelve (grupos, escalado) | `AddSignalR().AddStackExchangeRedis(...)` y `IHubContext` desde el worker |
+| 🔴 | **Sin relleno de gaps en reconexión** (ADR-006): el cliente sólo pide snapshot al inicio; al reconectar no re-sincroniza | Tras un corte, el dashboard queda con datos viejos/huecos | En reconexión: re-pedir snapshot y/o enviar último `seq` y que el server reenvíe desde un buffer corto |
+| 🟡 | Forwarder hace `SendAsync` *fire-and-forget* sin await ni manejo de error | Bajo carga, concurrencia sin control y errores silenciosos | Await + coalescencia/throttle por cliente en el server |
+
+### D. Datos y camino frío
+
+| Pri | Brecha (hoy) | Dificultad real | Idea mejor |
+|-----|--------------|-----------------|------------|
+| 🟠 | Sólo existe el read model `device_state`; **no hay telemetría cruda ni S3** (ADR-007) | Sin histórico ni fuente de verdad fría; no se puede reproyectar | Tabla `telemetry` particionada por tiempo + escritura de crudos a S3 (Fase 2) |
+| 🟡 | Sin catálogo `devices`, sin tenant/fleet, sin índices más allá del PK | Multi-cliente y consultas por flota se complican luego | Modelar `devices`/`fleets`; índices por (device_id, ts); retención por *drop* de partición |
+
+### E. Observabilidad, resiliencia y pruebas
+
+| Pri | Brecha (hoy) | Dificultad real | Idea mejor |
+|-----|--------------|-----------------|------------|
+| 🔴 | **El NFR estrella (latencia evento→pantalla P95) no se mide** | "Tiempo real" sin número es una afirmación, no un hecho | **OpenTelemetry** end-to-end con el `seq` como correlación; dashboard de latencia y profundidad de cola |
+| 🟠 | **Sin prueba de carga**: nunca se validó 5.000 ev/s; el simulador (Node, `setInterval`) tope ~1.800/2.000 por *drift* de timer | No sabemos el punto de quiebre real | **k6** o generador multi-hilo; medir pérdida y P95 bajo carga sostenida |
+| 🟠 | DLQ existe pero **sin herramienta de replay**; sin retry/backoff explícito ni circuit breaker | Mensajes envenenados se acumulan sin operación clara | Replay de DLQ; backoff+jitter; circuit breaker en dependencias |
+| 🟡 | Cobertura mínima: 1 test de integración (InMemory) + 2 unit | Regresiones difíciles de atrapar | **Marble tests** de la coalescencia (SAD §10); integración contra LocalStack (Testcontainers); E2E (Playwright) |
+| 🟡 | Sin health/liveness en api/worker; arranque falla si Postgres/Redis no están | En orquestadores, sin readiness no hay rolling deploy sano | Endpoints de health + readiness gateada por dependencias |
+
+### F. Frontend
+
+| Pri | Brecha (hoy) | Dificultad real | Idea mejor |
+|-----|--------------|-----------------|------------|
+| 🟡 | Mapa = scatter en canvas por lat/lng (sin geografía real) | No es un mapa usable para operación | **deck.gl / Mapbox GL** con clustering y render del viewport (SAD §9) |
+| 🟡 | Tabla de dispositivos sin **CDK Virtual Scroll** (cap a 200 filas) | Con miles de filas, el DOM se hace pesado | CDK Virtual Scroll; servidor pagina/filtra |
+| 🔵 | URL de API hardcodeada en `devApiConfig` | No sirve para varios entornos | Externalizar por entorno (build-time o `/config`) |
+
+### G. Infra y operación
+
+| Pri | Brecha (hoy) | Dificultad real | Idea mejor |
+|-----|--------------|-----------------|------------|
+| 🟠 | Recursos con **`awslocal`**, no **CDK** (ADR-009) | La infra no es versionada/reproducible en la nube | Definir SNS/SQS/S3/Redis/RDS con **AWS CDK**; `cdklocal` en dev |
+| 🟡 | Credenciales/strings en `appsettings` (dev) | En prod, secretos en claro = riesgo | Secrets Manager/SSM; config por entorno |
+| 🔵 | CI con `nx affected` incluye .NET por `run-commands`, **sin verificar en runner** | El CI podría no estar realmente verde | Ejecutar el workflow en un PR de prueba y confirmar |
+
+---
+
+### Top 5 mejoras priorizadas (mayor valor / acercan a la realidad)
+
+1. 🔴 **Medir el NFR estrella**: OTel + latencia evento→pantalla y profundidad de cola. Sin esto, "tiempo real" no está demostrado.
+2. 🔴 **Reconexión sin huecos** (ADR-006) en el cliente: re-snapshot + replay por `seq`. Es correctitud, no lujo.
+3. 🟠 **Grupos de SignalR por viewport** + backplane nativo: lo que separa una demo de algo que escala.
+4. 🟠 **Prueba de carga real (k6)** a 5.000 ev/s con consumidores en paralelo: descubre el punto de quiebre antes que el cliente.
+5. 🔴 **Auth de ingesta** + separar el servicio de ingesta: seguridad y escalado independiente.
+
+### Diferencias clave "demo vs realidad" (resumen honesto)
+
+Lo construido **demuestra la arquitectura** y corre el flujo de extremo a extremo, pero
+hoy es **single-instance, sin auth, sin medición de latencia, con push broadcast y sin
+camino frío**. La distancia a producción no está en "más features", sino en
+**seguridad, medición, escalado horizontal y resiliencia operativa**. Varias de estas ya
+estaban en el roadmap (Fase 2/3); esta auditoría las hace explícitas y prioriza.
+
+**Veredicto:** ✅ Base sólida y honesta; con un plan claro de endurecimiento. Recomendación:
+intercalar una **Fase 1.5 de endurecimiento** (puntos 1–5) antes o en paralelo a la Fase 2.
+
+---
+
 ## AUD-007 — Rendimiento del frontend: change detection zoneless (2026-06-22)
 
 **Fase:** Fase 1 — afinado de rendimiento del dashboard

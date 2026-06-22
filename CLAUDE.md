@@ -95,8 +95,11 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
 - Interfaces de extensión: `ITelemetryPublisher`, `IDeviceStateRepository`, `IEventDeduplicator`, `ITelemetryBroadcaster`.
 
 ### Pendiente
+- **Backlog crítico (revisión [AUD-008](./AUDIT.md#aud-008--revisión-crítica-de-fases-01-brechas-con-producción-y-mejoras-2026-06-22)):**
+  medir latencia evento→pantalla (OTel), reconexión sin huecos (ADR-006), grupos SignalR por
+  viewport + backplane nativo, prueba de carga k6 a 5k ev/s, auth de ingesta. Considerar **Fase 1.5** de endurecimiento.
 - **Fase 2**: S3 data lake + tabla `telemetry` particionada (ADR-007); alertas por umbral.
-- Productivizar: backplane nativo de SignalR (AddStackExchangeRedis); infra con **CDK** (ADR-009).
+- Productivizar: infra con **CDK** (ADR-009).
 - Para correr el pipeline: `docker compose -f infra/docker-compose.yml up -d`, luego
   `nx serve api` + `nx serve worker` + `npm start` + simulador con `--url`.
 

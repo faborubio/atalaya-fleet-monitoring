@@ -12,7 +12,7 @@
       "options": {
         "outputPath": "dist/apps/atalaya-web",
         "browser": "apps/atalaya-web/src/main.ts",
-        "polyfills": ["zone.js"],
+        "polyfills": [],
         "tsConfig": "apps/atalaya-web/tsconfig.app.json",
         "inlineStyleLanguage": "scss",
         "assets": [

@@ -36,6 +36,33 @@ proyecto.
 
 ---
 
+## AUD-007 — Rendimiento del frontend: change detection zoneless (2026-06-22)
+
+**Fase:** Fase 1 — afinado de rendimiento del dashboard
+**Alcance:** Eliminar el jank bajo carga pasando a change detection sin zone.js (ADR-010).
+**Auditor:** Fabián Rubio + Claude
+
+### Hallazgos
+
+| Sev | Hallazgo | Acción | Estado |
+|-----|----------|--------|--------|
+| 🟠 | UI con micro-tirones bajo carga: con **zone.js**, cada mensaje SignalR dispara un ciclo de CD, aunque coalescemos cada 100 ms (el problema del firehose, ADR-010) | Activar zoneless | Resuelto |
+| ✅ | `provideZonelessChangeDetection()` en el bootstrap; `zone.js` fuera de polyfills | — | OK |
+| ✅ | El render lo gobiernan los **signals**: el caudal de eventos ya no provoca CD, solo el `set` coalescido | — | OK |
+| ✅ | Build prod OK; tests verdes (manejan CD vía `detectChanges`) | — | OK |
+| 🔵 | Parte del tirón también venía del **modo dev** (`nx serve` sin optimizar + backend en Debug); un build prod va más fluido | Medir con build prod | Abierto |
+
+### Conclusión
+
+El dashboard pasa a **zoneless**, cumpliendo el pendiente del ADR-010. Combinado con
+OnPush + Signals + coalescencia, el firehose deja de acoplar la llegada de eventos al
+change detection. Queda como nota que el `nx serve` de desarrollo no representa el
+rendimiento real (medir con build de producción).
+
+**Veredicto:** ✅ Mejora de rendimiento aplicada y verificada (build/test).
+
+---
+
 ## AUD-006 — Cableado del pipeline real: SNS/SQS + Redis + Postgres + SignalR (2026-06-22)
 
 **Fase:** Fase 1 — Camino caliente sobre infraestructura real (sustituye los shims)

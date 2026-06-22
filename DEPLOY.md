@@ -43,13 +43,28 @@ INGEST_URL=http://localhost:3000/ingest node dist/apps/simulator/main.js --rate 
 ```
 Flags: `--rate` (ev/s), `--devices`, `--duration` (s, 0 = ∞), `--url` (o `INGEST_URL`).
 
-### 1.3 Backend .NET ⛔
+### 1.3 Backend .NET — ✅ disponible (modo dev sin Docker)
 
 ```bash
-# Requiere .NET SDK 8 (ver TROUBLESHOOTING TS-001)
-dotnet run --project apps/api        # Minimal API + hub SignalR
-dotnet run --project apps/worker     # consumidor SQS
+dotnet build Atalaya.sln                 # compila contracts + api + worker + tests
+nx serve api                             # = dotnet run apps/api → http://localhost:3000
+#   endpoints: POST /ingest · GET /api/devices · GET /health · hub /hubs/telemetry
+nx serve worker                          # esqueleto (consumo SQS pendiente Docker, TS-002)
+nx test api-tests                        # test de integración del camino caliente
 ```
+
+Prueba end-to-end del camino caliente (sin Docker):
+```bash
+nx serve api
+# en otra terminal:
+node dist/apps/simulator/main.js --rate 1000 --devices 50 --duration 5 --url http://localhost:3000/ingest
+curl http://localhost:3000/api/devices   # read model device_state poblado
+```
+
+> **Modo dev vs objetivo.** Hoy la API procesa en proceso (bus en memoria). La
+> arquitectura objetivo (ADR-001/008) mueve el procesamiento al `worker` consumiendo
+> **SQS**; las interfaces `ITelemetryBus`/`IDeduplicator`/`IDeviceStateStore` permiten el
+> cambio sin reescribir la lógica.
 
 ### 1.4 Infra local con LocalStack ⛔
 

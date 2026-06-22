@@ -1,0 +1,22 @@
+{
+  "name": "worker",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "sourceRoot": "apps/worker",
+  "tags": ["scope:backend", "lang:dotnet"],
+  "targets": {
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "dotnet build apps/worker/Atalaya.Worker.csproj -c Release --nologo"
+      }
+    },
+    "serve": {
+      "executor": "nx:run-commands",
+      "continuous": true,
+      "options": {
+        "command": "dotnet run --project apps/worker/Atalaya.Worker.csproj"
+      }
+    }
+  }
+}

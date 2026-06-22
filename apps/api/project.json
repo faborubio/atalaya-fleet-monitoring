@@ -1,0 +1,22 @@
+{
+  "name": "api",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "sourceRoot": "apps/api",
+  "tags": ["scope:backend", "lang:dotnet"],
+  "targets": {
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "dotnet build apps/api/Atalaya.Api.csproj -c Release --nologo"
+      }
+    },
+    "serve": {
+      "executor": "nx:run-commands",
+      "continuous": true,
+      "options": {
+        "command": "dotnet run --project apps/api/Atalaya.Api.csproj --launch-profile http"
+      }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "contracts",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "sourceRoot": "libs/contracts",
+  "tags": ["scope:shared", "lang:dotnet"],
+  "targets": {
+    "build": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "dotnet build libs/contracts/Atalaya.Contracts.csproj -c Release --nologo"
+      }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "api-tests",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "sourceRoot": "apps/api.tests",
+  "tags": ["scope:backend", "lang:dotnet"],
+  "targets": {
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "dotnet test apps/api.tests/Atalaya.Api.Tests.csproj --nologo"
+      }
+    }
+  }
+}

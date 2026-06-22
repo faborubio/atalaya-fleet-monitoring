@@ -57,33 +57,47 @@ con contexto y trade-offs. Si una decisión nueva surge, se añade como ADR al S
 - ✅ App `atalaya-web`: shell + 4 rutas lazy (mapa/dispositivos/alertas/históricos), `OnPush`.
   Build 71 KB transfer, lint y tests verdes.
 - ✅ App `simulator` (Node): generador de carga de telemetría (modelo SAD §6), ~1800 ev/s en seco.
-- ✅ Auditorías [AUD-001](./AUDIT.md#aud-001--estado-inicial-del-repositorio-y-toolchain-2026-06-21)
-  y [AUD-002](./AUDIT.md#aud-002--scaffold-fase-0-monorepo-nx--angular--simulador-2026-06-21).
+- ✅ **.NET SDK 8.0.422** instalado ([TS-001](./TROUBLESHOOTING.md#ts-001--no-hay-net-sdk-solo-runtime) resuelto).
+- ✅ **Backend .NET** (`Atalaya.sln`): `libs/contracts` + `apps/api` (Minimal API + SignalR +
+  ingesta/dedup/read model en memoria) + `apps/worker` (esqueleto) + `apps/api.tests`.
+  Camino caliente verificado E2E con el simulador. Integrado en Nx (6 proyectos).
+- ✅ Auditorías [AUD-001](./AUDIT.md), [AUD-002](./AUDIT.md) y [AUD-003](./AUDIT.md#aud-003--backend-net-api--signalr--camino-caliente-en-memoria-2026-06-21).
+
+### Decisiones de implementación a recordar
+- El procesamiento del camino caliente vive **en la API** (modo dev sin Docker). Objetivo:
+  moverlo al `worker` sobre **SQS** (ADR-008). Aislado tras `ITelemetryBus`/`IDeduplicator`/`IDeviceStateStore`.
+- Dedup y read model **en memoria** → objetivo Redis + SQL.
+- API en **puerto 3000** (`apps/api/Properties/launchSettings.json`, perfil `http`).
+- `nuget.config` versionado en la raíz (la máquina no tenía fuentes NuGet, [TS-004](./TROUBLESHOOTING.md#ts-004--dotnet-no-resuelve-paquetes-nuget-sin-fuentes)).
 
 ### Comandos útiles
 - `npm start` → sirve `atalaya-web` (http://localhost:4200)
-- `node dist/apps/simulator/main.js --rate 2000 --devices 100 --duration 5` → simulador en seco
-- `npx nx run-many -t lint test build` → verificación completa
+- `nx serve api` → API .NET (http://localhost:3000)
+- `node dist/apps/simulator/main.js --rate 1000 --devices 50 --duration 5 --url http://localhost:3000/ingest` → ingesta real
+- `npx nx run-many -t build` · `nx test api-tests` · `npx nx run-many -t lint test` → verificación
 
 ### Bloqueado (prerequisitos por instalar)
-- 🔴 **Backend .NET** — falta .NET SDK 8 → [TS-001](./TROUBLESHOOTING.md#ts-001--no-hay-net-sdk-solo-runtime).
-- 🔴 **Infra CDK/LocalStack** — falta Docker Desktop → [TS-002](./TROUBLESHOOTING.md#ts-002--docker-no-disponible).
+- 🔴 **Infra CDK/LocalStack** + cola SQS real en el worker + Redis/SQL — falta **Docker Desktop** → [TS-002](./TROUBLESHOOTING.md#ts-002--docker-no-disponible).
 
 ### Toolchain verificado (2026-06-21)
-- ✅ git 2.51 · Node v24.15 · npm 11.14 · Nx 21.6.11
-- 🔴 .NET: solo runtime 6.0.36, **sin SDK** · 🔴 Docker: no instalado
+- ✅ git 2.51 · Node v24.15 · npm 11.14 · Nx 21.6.11 · **.NET SDK 8.0.422**
+- 🔴 Docker: no instalado
 
 ### Estructura actual del repo
 ```
 atalaya/
 ├─ apps/
 │  ├─ atalaya-web/   # SPA Angular (shell + features lazy)
-│  └─ simulator/     # generador de carga de telemetría (Node)
+│  ├─ simulator/     # generador de carga de telemetría (Node)
+│  ├─ api/           # .NET Minimal API + SignalR + camino caliente en memoria
+│  ├─ worker/        # .NET Worker Service (esqueleto, consumo SQS pendiente)
+│  └─ api.tests/     # xUnit, test de integración del camino caliente
+├─ libs/contracts/   # DTOs .NET compartidos (TelemetryEvent, DeviceState)
+├─ Atalaya.sln, nuget.config
 ├─ *.md              # SAD, README, AUDIT, DEPLOY, TROUBLESHOOTING, CLAUDE
 └─ nx.json, package.json, tsconfig.base.json, eslint.config.mjs
 ```
-Pendientes de crear (bloqueados): `apps/api` (.NET Minimal API), `apps/worker` (.NET),
-`infra/` (AWS CDK).
+Pendiente de crear (bloqueado por Docker): `infra/` (AWS CDK), wiring SQS/Redis/SQL.
 
 ## 6. Decisiones de arquitectura clave (resumen — el detalle está en el SAD)
 

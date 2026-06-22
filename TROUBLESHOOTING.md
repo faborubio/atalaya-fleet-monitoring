@@ -34,7 +34,11 @@ resolvieron**. El objetivo es no tropezar dos veces con la misma piedra.
 
 ## TS-001 — No hay .NET SDK (solo runtime)
 
-**Fecha:** 2026-06-21 · **Área:** backend · **Estado:** 🔴 Abierto (bloqueante)
+**Fecha:** 2026-06-21 · **Área:** backend · **Estado:** ✅ Resuelto (2026-06-21)
+
+**Resolución:** instalado **.NET SDK 8.0.422** con
+`winget install Microsoft.DotNet.SDK.8 --silent`. Verificado con `dotnet --list-sdks`.
+Tras instalar puede hacer falta reabrir la terminal para refrescar el PATH.
 
 **Síntoma**
 ```
@@ -117,6 +121,60 @@ npx create-nx-workspace@21 atalaya --preset=angular-monorepo --appName=atalaya-w
 **Prevención**
 Quedarse en Nx 21 mientras dure el desarrollo de Fase 0–3. Para subir a Nx 23 más
 adelante, usar la migración asistida `npx nx migrate latest` (no recrear el workspace).
+
+---
+
+## TS-004 — `dotnet` no resuelve paquetes NuGet (sin fuentes)
+
+**Fecha:** 2026-06-21 · **Área:** backend/tooling · **Estado:** ✅ Resuelto
+
+**Síntoma**
+```
+error NU1100: No se puede resolver 'Microsoft.Extensions.Hosting (>= 8.0.1)' para 'net8.0'.
+$ dotnet nuget list source
+No se encontró ningún origen.
+```
+
+**Causa raíz**
+La máquina no tenía **ninguna fuente NuGet** configurada (ni siquiera nuget.org), así que
+el restore de cualquier paquete fallaba.
+
+**Solución**
+Se versionó un [`nuget.config`](./nuget.config) en la raíz del repo declarando nuget.org.
+Así el restore es reproducible sin depender de la config global:
+```xml
+<packageSources>
+  <clear />
+  <add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" />
+</packageSources>
+```
+
+**Prevención**
+El `nuget.config` del repo cubre cualquier clon. Para añadirla globalmente:
+`dotnet nuget add source https://api.nuget.org/v3/index.json -n nuget.org`.
+
+---
+
+## TS-005 — `Microsoft.AspNetCore.Mvc.Testing` incompatible con net8.0
+
+**Fecha:** 2026-06-21 · **Área:** backend/test · **Estado:** ✅ Resuelto
+
+**Síntoma**
+```
+error NU1202: El paquete Microsoft.AspNetCore.Mvc.Testing 10.0.9 no es compatible con
+net8.0. ... admite: net10.0
+```
+
+**Causa raíz**
+`dotnet add package` instala la **última** versión por defecto (10.x → net10), pero los
+proyectos son net8.0.
+
+**Solución**
+Fijar la versión 8.x: `dotnet add package Microsoft.AspNetCore.Mvc.Testing --version 8.0.11`.
+
+**Prevención**
+Al añadir paquetes de ASP.NET Core a proyectos net8, fijar siempre `--version 8.0.x`
+(van alineados con el runtime).
 
 ---
 

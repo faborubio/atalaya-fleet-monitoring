@@ -36,6 +36,50 @@ proyecto.
 
 ---
 
+## AUD-003 — Backend .NET: API + SignalR + camino caliente en memoria (2026-06-21)
+
+**Fase:** Fase 1 (parcial) — Camino caliente, lado backend
+**Alcance:** Instalación de .NET SDK, scaffold de la solución (.NET 8), Minimal API con
+ingesta + dedup + read model + hub SignalR, worker skeleton, test de integración e
+integración en Nx.
+**Auditor:** Fabián Rubio + Claude
+
+### Hallazgos
+
+| Sev | Hallazgo | Acción | Estado |
+|-----|----------|--------|--------|
+| ✅ | **.NET SDK 8.0.422** instalado; desbloquea backend | — | Resuelto → [TS-001](./TROUBLESHOOTING.md#ts-001--no-hay-net-sdk-solo-runtime) |
+| ✅ | Solución `Atalaya.sln`: `contracts` (lib) + `api` + `worker` + `api.tests` | — | OK |
+| ✅ | `api`: Minimal API con `POST /ingest` (202, no escribe directo, ADR-001), `GET /api/devices`, `GET /health`, hub SignalR `/hubs/telemetry` | — | OK |
+| ✅ | Camino caliente en memoria: bus (canal acotado) → procesador por lotes → dedup (ADR-006) → read model (ADR-005) → push SignalR (ADR-002) | — | OK |
+| ✅ | **E2E verificado**: simulador → `/ingest` 2.700 ev en 3s, 0 fallos; `device_state` con 50 dispositivos | — | OK |
+| ✅ | Test de integración (WebApplicationFactory, sin Docker): ingesta + dedup + read model | — | OK |
+| ✅ | Nx reconoce los 6 proyectos; `nx run-many -t build` (5) y `nx test api-tests` OK | — | OK |
+| 🟡 | Sin fuentes NuGet en la máquina | `nuget.config` versionado | Resuelto → [TS-004](./TROUBLESHOOTING.md#ts-004--dotnet-no-resuelve-paquetes-nuget-sin-fuentes) |
+| 🟠 | El procesamiento corre **en la API**, no en el `worker` separado (ADR-008) | Mover a `worker` sobre SQS al tener Docker | Abierto (shim de dev documentado) → [TS-002](./TROUBLESHOOTING.md#ts-002--docker-no-disponible) |
+| 🟡 | Dedup y read model **en memoria**, sin persistencia | Cambiar a Redis (dedup) + SQL (read model) | Abierto (objetivo Fase 1/2) |
+
+### Verificaciones
+
+- [x] `dotnet build Atalaya.sln` — 0 errores, 0 warnings.
+- [x] API arranca en `http://localhost:3000` y procesa ingesta.
+- [x] `dotnet test` y `nx test api-tests` — 1/1 OK.
+- [x] `nx run-many -t build` — 5 proyectos OK.
+
+### Conclusión
+
+El **camino caliente del backend está vivo y verificado de extremo a extremo** sin
+depender de Docker: ingesta desacoplada, dedup idempotente, read model y push SignalR.
+Las piezas que requieren infraestructura (cola SQS real en el `worker`, dedup en Redis,
+read model en SQL) están **claramente marcadas como shim de dev** y aisladas tras
+interfaces (`ITelemetryBus`, `IDeduplicator`, `IDeviceStateStore`) para sustituirlas sin
+reescribir la lógica. Falta conectar el **frontend Angular** al hub (siguiente paso) y la
+infra (bloqueada por [TS-002](./TROUBLESHOOTING.md#ts-002--docker-no-disponible)).
+
+**Veredicto:** ✅ Backend del camino caliente (modo dev) completo y verificado.
+
+---
+
 ## AUD-002 — Scaffold Fase 0: monorepo Nx + Angular + simulador (2026-06-21)
 
 **Fase:** Fase 0 — Cimientos (frontend + simulador)

@@ -83,10 +83,13 @@ Las decisiones están registradas como **ADRs** en el [SAD](./SAD-Atalaya.md#5-d
 atalaya/
 ├─ apps/
 │  ├─ atalaya-web/      # SPA Angular: shell + features lazy (mapa, dispositivos, alertas, históricos)
-│  └─ simulator/        # Generador de carga de telemetría (Node)
-│  ├─ api/    ⛔         # .NET Minimal API + hub SignalR (pendiente, falta SDK)
-│  └─ worker/ ⛔         # .NET Worker Service / consumidor SQS (pendiente)
-├─ infra/     ⛔         # AWS CDK (pendiente, falta Docker)
+│  ├─ simulator/        # Generador de carga de telemetría (Node)
+│  ├─ api/              # .NET Minimal API + SignalR + camino caliente (dedup, read model)
+│  ├─ worker/           # .NET Worker Service (esqueleto; consumo SQS pendiente Docker)
+│  └─ api.tests/        # xUnit: test de integración del camino caliente
+├─ libs/contracts/      # DTOs .NET compartidos (TelemetryEvent, DeviceState)
+├─ infra/        ⛔      # AWS CDK (pendiente, falta Docker)
+├─ Atalaya.sln, nuget.config
 ├─ SAD-Atalaya.md       # Documento de arquitectura (rector)
 ├─ README.md            # Este archivo
 ├─ CLAUDE.md            # Contexto persistente entre sesiones de trabajo
@@ -105,20 +108,25 @@ npm install
 # Frontend (dashboard en http://localhost:4200)
 npm start                 # = nx serve atalaya-web
 
-# Simulador de telemetría (en seco, sin backend aún)
-npx nx build simulator
-node dist/apps/simulator/main.js --rate 2000 --devices 100 --duration 10
-# con backend (Fase 1): INGEST_URL=http://localhost:3000/ingest node dist/apps/simulator/main.js --rate 5000
+# Backend .NET (API en http://localhost:3000)
+dotnet build Atalaya.sln
+npx nx serve api
 
-# Verificación completa
-npx nx run-many -t lint test build
+# Camino caliente end-to-end (en otra terminal, con la API arriba):
+npx nx build simulator
+node dist/apps/simulator/main.js --rate 1000 --devices 50 --duration 5 --url http://localhost:3000/ingest
+curl http://localhost:3000/api/devices    # read model device_state poblado
+
+# Verificación
+npx nx run-many -t build       # Angular + simulador + .NET
+npx nx run-many -t lint test   # lint + tests (front) ; nx test api-tests (backend)
 ```
 
-Prerequisitos pendientes (para backend e infra):
+Prerequisitos:
 
 - Node.js ≥ 20 y npm ≥ 10 ✅
-- **.NET SDK 8** ⛔ (ver [TROUBLESHOOTING.md](./TROUBLESHOOTING.md#ts-001--no-hay-net-sdk-solo-runtime))
-- **Docker Desktop** ⛔ (ver [TROUBLESHOOTING.md](./TROUBLESHOOTING.md#ts-002--docker-no-disponible))
+- **.NET SDK 8** ✅ (8.0.422)
+- **Docker Desktop** ⛔ — solo para infra/LocalStack y cola SQS real (ver [TROUBLESHOOTING.md](./TROUBLESHOOTING.md#ts-002--docker-no-disponible))
 
 Más detalle en [DEPLOY.md](./DEPLOY.md).
 
@@ -128,8 +136,8 @@ Más detalle en [DEPLOY.md](./DEPLOY.md).
 
 | Fase | Alcance | Estado |
 |---|---|---|
-| **0 — Cimientos** | Monorepo Nx, esqueleto Angular + .NET, CDK base, simulador, CI | 🟡 En curso |
-| **1 — Camino caliente** | Ingesta → SNS/SQS → worker → SignalR → dashboard en vivo | ⬜ Pendiente |
+| **0 — Cimientos** | Monorepo Nx, esqueleto Angular + .NET, simulador, CI | ✅ (infra CDK pendiente Docker) |
+| **1 — Camino caliente** | Ingesta → cola → procesamiento → SignalR → dashboard en vivo | 🟡 Backend OK (modo dev); falta conectar dashboard |
 | **2 — Alertas + camino frío** | Reglas + read model de alertas, histórico, S3/Athena | ⬜ Pendiente |
 | **3 — Endurecimiento** | DLQ/replay, OTel, prueba de carga 5k ev/s, seguridad | ⬜ Pendiente |
 

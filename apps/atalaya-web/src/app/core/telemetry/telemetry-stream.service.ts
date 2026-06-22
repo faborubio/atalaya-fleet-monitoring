@@ -18,6 +18,7 @@ import { DeviceState } from '../models/device-state';
 export class TelemetryStreamService {
   private readonly config = inject(API_CONFIG);
   private readonly deltas = new Subject<DeviceState[]>();
+  private readonly connected = new Subject<void>();
   private connection?: HubConnection;
 
   /** Estado de conexión, para que la UI muestre "en vivo / reconectando". */
@@ -25,6 +26,12 @@ export class TelemetryStreamService {
 
   /** Lote de deltas tal como llegan del hub (`devicesUpdated`). */
   readonly deltas$: Observable<DeviceState[]> = this.deltas.asObservable();
+
+  /**
+   * Emite en cada (re)conexión exitosa. El store lo usa para re-sincronizar el snapshot
+   * y así no quedar con huecos tras una caída (ADR-006).
+   */
+  readonly connected$: Observable<void> = this.connected.asObservable();
 
   async connect(): Promise<void> {
     if (this.connection) return;
@@ -40,12 +47,16 @@ export class TelemetryStreamService {
     );
 
     this.connection.onreconnecting(() => this.status.set(HubConnectionState.Reconnecting));
-    this.connection.onreconnected(() => this.status.set(HubConnectionState.Connected));
+    this.connection.onreconnected(() => {
+      this.status.set(HubConnectionState.Connected);
+      this.connected.next(); // re-sincroniza el snapshot tras reconectar
+    });
     this.connection.onclose(() => this.status.set(HubConnectionState.Disconnected));
 
     try {
       await this.connection.start();
       this.status.set(HubConnectionState.Connected);
+      this.connected.next();
     } catch {
       this.status.set(HubConnectionState.Disconnected);
     }

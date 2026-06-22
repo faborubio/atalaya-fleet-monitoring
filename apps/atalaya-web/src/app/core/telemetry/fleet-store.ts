@@ -48,17 +48,11 @@ export class FleetStore {
     if (this.started) return;
     this.started = true;
 
-    // Snapshot inicial del read model (camino caliente, ADR-005).
-    this.http
-      .get<DeviceState[]>(`${this.config.baseUrl}/api/devices`)
+    // Re-sincroniza el snapshot del read model en cada (re)conexión: cierra huecos tras
+    // una caída sin necesidad de replay por evento (el read model ya es el estado actual).
+    this.stream.connected$
       .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe({
-        next: (snapshot) => {
-          for (const d of snapshot) this.byId.set(d.deviceId, d);
-          this.devices.set([...this.byId.values()]);
-        },
-        error: () => void 0, // la API puede no estar arriba aún; el stream rellenará
-      });
+      .subscribe(() => this.loadSnapshot());
 
     // Stream en vivo con coalescencia por ventana.
     this.stream.deltas$
@@ -76,6 +70,19 @@ export class FleetStore {
     this.destroyRef.onDestroy(() => clearInterval(tick));
 
     await this.stream.connect();
+  }
+
+  private loadSnapshot(): void {
+    this.http
+      .get<DeviceState[]>(`${this.config.baseUrl}/api/devices`)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (snapshot) => {
+          for (const d of snapshot) this.byId.set(d.deviceId, d);
+          this.devices.set([...this.byId.values()]);
+        },
+        error: () => void 0, // la API puede no estar lista; el próximo connect reintenta
+      });
   }
 
   private applyWindows(windows: DeviceState[][]): void {

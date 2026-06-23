@@ -42,6 +42,7 @@ builder.Services.AddSingleton<IRawEventArchive, S3RawEventArchive>();
 builder.Services.AddAtalayaPersistence(builder.Configuration);
 builder.Services.AddAtalayaRedis(builder.Configuration);
 builder.Services.AddHostedService<SqsTelemetryConsumer>();
+builder.Services.AddHostedService<WorkerHealthService>(); // health/live + health/ready (Fase 3)
 
 // Retención del camino frío (AUD-015 p2): dropea particiones viejas de telemetry.
 builder.Services.AddSingleton(

@@ -39,16 +39,32 @@ public sealed class SnsBatchPublisher(
             "Publicador SNS por lotes activo (≤{Msgs} msgs × {Evts} ev/msg, ≤{KB} KB/lote, ventana {Ms} ms).",
             MaxBatchEntries, maxEventsPerMessage, MaxBatchBytes / 1024, flushMs);
 
-        while (await reader.WaitToReadAsync(stoppingToken))
+        try
         {
-            Drain(reader, pending);
-            if (flushMs > 0)
+            while (await reader.WaitToReadAsync(stoppingToken))
             {
-                await Task.Delay(flushMs, stoppingToken); // coalesce la ráfaga
                 Drain(reader, pending);
-            }
+                if (flushMs > 0)
+                {
+                    await Task.Delay(flushMs, stoppingToken); // coalesce la ráfaga
+                    Drain(reader, pending);
+                }
 
-            await FlushAsync(arn, pending, maxEventsPerMessage, stoppingToken);
+                await FlushAsync(arn, pending, maxEventsPerMessage, stoppingToken);
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // Apagado ordenado (Fase 3): drena lo que quede en el canal y publícalo antes de salir,
+            // en vez de perder lo buffered (deuda de AUD-010). Acotado por tiempo para no colgar el cierre.
+            Drain(reader, pending);
+            if (pending.Count > 0)
+            {
+                using var drain = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                logger.LogInformation("Apagado: drenando {N} eventos pendientes a SNS.", pending.Count);
+                try { await FlushAsync(arn, pending, maxEventsPerMessage, drain.Token); }
+                catch (OperationCanceledException) { logger.LogWarning("Drenado de cierre agotó el tiempo."); }
+            }
         }
     }
 

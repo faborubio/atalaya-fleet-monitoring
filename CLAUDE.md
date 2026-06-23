@@ -144,9 +144,11 @@ Carga: ver [DEPLOY.md §1.6](./DEPLOY.md) (k6 vía Docker).
 - ~~**Fase 2.5 calidad de datos** (Top de [AUD-015](./AUDIT.md))~~ ✅ HECHO: retención por DROP
   PARTITION + S3 idempotente ([AUD-016](./AUDIT.md)) + alertas como **incidentes** con histéresis
   ([AUD-017](./AUDIT.md)). Verificado E2E.
+- ~~**Fase 3 endurecimiento operativo**: readiness + graceful shutdown + Testcontainers~~ ✅ HECHO
+  ([AUD-018](./AUDIT.md)). `/health/live` + `/health/ready` (API y worker); drenado del buffer al
+  apagar; tests Postgres reales (skippables sin Docker). Verificado E2E (ready→503 con Redis caído).
 - **Revisión crítica [AUD-015](./AUDIT.md)** — restante: durabilidad del borde de ingesta (API GW→SNS),
-  auth de lecturas (OIDC/JWT), Testcontainers del SQL frío, downsampling del histórico. Endurecimiento
-  incremental, sin urgencia.
+  auth de lecturas (OIDC/JWT), DLQ replay, downsampling del histórico, virtual scroll/mapa. Incremental.
 - Deuda menor: reintento/persistencia ante `PublishBatch` fallido (AUD-010); el simulador no genera
   valores de alerta crítica (solo aviso), lo crítico solo se ve por unit test (AUD-011).
 

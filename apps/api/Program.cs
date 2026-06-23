@@ -7,11 +7,13 @@ using Atalaya.Api.Services;
 using Atalaya.Contracts;
 using Atalaya.Persistence;
 using Atalaya.Realtime;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddSignalR();
+builder.Services.AddHealthChecks(); // las comprobaciones de dependencias se añaden en modo Aws
 
 // Registro de viewport (AUD-008): compartido por el hub y el forwarder/procesador.
 builder.Services.AddSingleton<Atalaya.Api.Processing.ViewportRegistry>();
@@ -58,6 +60,12 @@ if (useAws)
     builder.Services.AddAtalayaRedis(builder.Configuration);
     builder.Services.AddHostedService<RedisDeltaForwarder>();
     builder.Services.AddHostedService<RedisAlertForwarder>();
+
+    // Readiness gateada por dependencias (Fase 3): Postgres + Redis + SNS.
+    builder.Services.AddHealthChecks()
+        .AddCheck<PostgresHealthCheck>("postgres", tags: ["ready"])
+        .AddCheck<RedisHealthCheck>("redis", tags: ["ready"])
+        .AddCheck<SnsHealthCheck>("sns", tags: ["ready"]);
 }
 else
 {
@@ -90,7 +98,10 @@ if (useAws)
 app.UseCors(DevCors);
 app.UseRateLimiter();
 
+// Liveness: el proceso está vivo (no comprueba dependencias). Readiness: gateada por deps (Fase 3).
 app.MapGet("/health", () => Results.Ok(new { status = "ok", transport, ts = DateTimeOffset.UtcNow }));
+app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
+app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = c => c.Tags.Contains("ready") });
 
 // Ingesta: NO escribe directo a la base. Publica para procesamiento async y responde 202 (ADR-001).
 // Autenticación por token de dispositivo (si está configurado) + rate limiting (ADR §8).

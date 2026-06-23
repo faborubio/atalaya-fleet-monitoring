@@ -36,6 +36,53 @@ proyecto.
 
 ---
 
+## AUD-018 — Fase 3 (endurecimiento operativo): readiness + graceful shutdown + Testcontainers (2026-06-23)
+
+**Fase:** Fase 3 — Endurecimiento (SAD §10), núcleo operativo. Cierra parte de [AUD-015](#aud-015--revisión-crítica-tras-fase-2--productivización-brechas-y-mejores-ideas-2026-06-22) C/D.
+**Alcance:** Health/readiness, apagado ordenado del buffer de ingesta, pruebas del SQL real.
+**Auditor:** Fabián Rubio + Claude
+
+### Qué se hizo
+
+- **Readiness gateada por dependencias** (AUD-015 E): API con `/health/live` (liveness, sin deps) y
+  `/health/ready` (checks de **Postgres + Redis + SNS**; en InMemory, sano sin checks). Worker con
+  endpoint mínimo (`HttpListener`, `/health/live` + `/health/ready` gateado por SQS, best-effort:
+  si no enlaza el puerto, el worker sigue). Liveness ≠ readiness → rolling deploy sano.
+- **Graceful shutdown** (deuda de AUD-010): al pararse, el `SnsBatchPublisher` **drena** el canal y
+  publica lo pendiente a SNS antes de salir (acotado a 5 s), en vez de perder lo *buffered*. El
+  worker ya era ordenado (cancelación cooperativa; un lote a medias no se borra → reentrega).
+- **Testcontainers** (AUD-015 F): tests de integración contra **Postgres real** para lo que el modo
+  InMemory no cubre — particionado, `unnest`, `ON CONFLICT`, retención por `DROP PARTITION` y la
+  máquina de incidentes en SQL. **Se saltan** limpiamente si Docker no está (no rompen el suite).
+
+### Hallazgos
+
+| Sev | Hallazgo | Acción | Estado |
+|-----|----------|--------|--------|
+| 🟠  | Sin readiness real (health no comprobaba deps; worker sin health) | `/health/ready` gateado + health del worker | Resuelto |
+| 🟡  | Apagado perdía el buffer de `/ingest` | Drenado del publicador en shutdown (best-effort, 5 s) | Resuelto |
+| 🟠  | SQL del camino frío/incidentes sin test automatizado | Testcontainers (Postgres real), skippable sin Docker | Resuelto |
+| 🟡  | El drenado de cierre es best-effort (timeout 5 s); a escala real la durabilidad la da API GW→SNS | Documentado (AUD-015 B) | Abierto (por diseño) |
+
+### Verificaciones
+
+- [x] `nx run-many -t build` (5) ✅ · `nx run-many -t lint test` ✅
+- [x] `nx test api-tests`: **32/32** con Docker (3 de Testcontainers contra Postgres real); **29 + 3
+      saltados** sin Docker.
+- [x] **E2E health**: API `/health/live`→200, `/health/ready`→200 con deps arriba y **→503 con Redis
+      caído** (readiness gatea de verdad); worker `:3100/health/live`→`live`, `/health/ready`→`ready`.
+
+### Conclusión
+
+El sistema gana postura operativa: readiness real para orquestadores, apagado que no tira lo
+buffered y red de seguridad automatizada sobre el código Postgres que antes solo se probaba a mano.
+Quedan de Fase 3 (SAD §10) los items de seguridad (OIDC/roles), DLQ replay, virtual scroll/mapa y
+runbooks; y los solo-AWS-real (Athena, throughput, multi-entorno).
+
+**Veredicto:** ✅ Núcleo operativo de Fase 3 cerrado.
+
+---
+
 ## AUD-017 — Fase 2.5 (parte 2): alertas como incidentes con histéresis (2026-06-22)
 
 **Fase:** Fase 2.5 — Calidad de datos (punto 1 de [AUD-015](#aud-015--revisión-crítica-tras-fase-2--productivización-brechas-y-mejores-ideas-2026-06-22), el de mayor impacto).

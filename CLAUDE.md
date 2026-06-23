@@ -51,7 +51,8 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
 **Fecha de actualización:** 2026-06-22
 **Fase:** 1 + 1.5 + ingesta desacoplada ([AUD-010](./AUDIT.md)) + **Fase 2 completa** (alertas
 [AUD-011](./AUDIT.md) + camino frío [AUD-012](./AUDIT.md)) + **productivización**: CDK
-([AUD-013](./AUDIT.md)) + viewport ([AUD-014](./AUDIT.md)). Pendiente real: Athena (cuenta AWS).
+([AUD-013](./AUDIT.md)) + viewport ([AUD-014](./AUDIT.md)) + **Fase 2.5 calidad de datos**
+([AUD-016](./AUDIT.md), [AUD-017](./AUDIT.md)). Pendiente real: Athena (cuenta AWS).
 
 ### Hecho
 - ✅ SAD v1.0.1 (ADR-001…011) + docs base. Repo en GitHub (12+ commits).
@@ -100,9 +101,11 @@ cero pérdida (59.200/59.200). Deuda menor: reintento/persistencia ante `Publish
 - Worker: `Aws:Consumers` (consumidores SQS en paralelo). OTel exporta a consola en dev (10s).
 - **Ingesta desacoplada (AUD-010)**: `/ingest` solo encola (202); el `SnsBatchPublisher` publica a
   SNS por lotes. Tunables en sección `Aws`: `PublisherQueueCapacity`, `MessageMaxEvents`, `FlushMilliseconds`.
-- **Alertas (AUD-011)**: reglas en `AlertRules` (contracts, umbrales como constantes públicas).
-  Canal Redis de alertas `atalaya:alerts:new`; evento SignalR `alertsRaised`; endpoint `/api/alerts`.
-  Severidad string (`Warning`/`Critical`). En InMemory las dispara el `TelemetryProcessor`.
+- **Alertas como incidentes (AUD-017)**: `AlertRules.Read` emite `RuleReading` (Firing/Clear con
+  histéresis); `IncidentTransitions.Decide` (puro) abre/escala/resuelve; store `IAlertIncidentStore`
+  (`alert_incidents`, una fila por `(device,rule)`, Postgres+InMemory). Solo se notifican transiciones.
+  Canal Redis `atalaya:alerts:new`; evento `alertsRaised` (lleva `AlertIncident[]`); `/api/alerts` =
+  activos. Frontend `AlertStore` indexa por `incidentId`.
 - **Camino frío (AUD-012)**: `ITelemetryArchive` (tabla `telemetry` particionada por día, retención
   O(1)) + `IRawEventArchive` (S3, solo en worker; `NullRawEventArchive` en InMemory). Endpoint
   `/api/history?deviceId&minutes&limit`. Worker config `Aws:Bucket` (data lake). S3 con `ForcePathStyle`.
@@ -138,9 +141,12 @@ Carga: ver [DEPLOY.md §1.6](./DEPLOY.md) (k6 vía Docker).
 - ~~Grupos por viewport en SignalR (AUD-008)~~ ✅ HECHO ([AUD-014](./AUDIT.md)): push O(viewport),
   opt-in sin regresión (firehose por defecto); control Todo/2×/4× en el dashboard.
 - **Productivizar (resto)**: **Athena** sobre el data lake S3 (solo AWS real, pendiente de cuenta).
-- **Revisión crítica [AUD-015](./AUDIT.md)** (ojo a producción tras Fase 2). Top: alertas como
-  **incidentes** (no por-evento), **retención por DROP PARTITION**, **idempotencia S3** del data lake,
-  durabilidad del borde de ingesta, Testcontainers del SQL frío. → candidata "Fase 2.5 calidad de datos".
+- ~~**Fase 2.5 calidad de datos** (Top de [AUD-015](./AUDIT.md))~~ ✅ HECHO: retención por DROP
+  PARTITION + S3 idempotente ([AUD-016](./AUDIT.md)) + alertas como **incidentes** con histéresis
+  ([AUD-017](./AUDIT.md)). Verificado E2E.
+- **Revisión crítica [AUD-015](./AUDIT.md)** — restante: durabilidad del borde de ingesta (API GW→SNS),
+  auth de lecturas (OIDC/JWT), Testcontainers del SQL frío, downsampling del histórico. Endurecimiento
+  incremental, sin urgencia.
 - Deuda menor: reintento/persistencia ante `PublishBatch` fallido (AUD-010); el simulador no genera
   valores de alerta crítica (solo aviso), lo crítico solo se ve por unit test (AUD-011).
 

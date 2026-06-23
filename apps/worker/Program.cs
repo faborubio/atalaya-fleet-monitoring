@@ -52,7 +52,7 @@ var host = builder.Build();
 
 // El worker es dueño de los read models y del camino frío: asegura esquemas y bucket al arrancar.
 await host.Services.GetRequiredService<IDeviceStateRepository>().EnsureSchemaAsync();
-await host.Services.GetRequiredService<IAlertRepository>().EnsureSchemaAsync();
+await host.Services.GetRequiredService<IAlertIncidentStore>().EnsureSchemaAsync();
 await host.Services.GetRequiredService<ITelemetryArchive>().EnsureSchemaAsync();
 await host.Services.GetRequiredService<IRawEventArchive>().EnsureBucketAsync();
 

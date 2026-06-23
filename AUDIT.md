@@ -36,6 +36,61 @@ proyecto.
 
 ---
 
+## AUD-017 — Fase 2.5 (parte 2): alertas como incidentes con histéresis (2026-06-22)
+
+**Fase:** Fase 2.5 — Calidad de datos (punto 1 de [AUD-015](#aud-015--revisión-crítica-tras-fase-2--productivización-brechas-y-mejores-ideas-2026-06-22), el de mayor impacto).
+**Alcance:** Sustituir las alertas por-evento por un modelo de incidentes con estado.
+**Auditor:** Fabián Rubio + Claude
+
+### Qué se hizo
+
+El modelo anterior disparaba **una alerta por cada evento** que cruzaba el umbral (un dispositivo a
+96 °C reportando a 10 Hz → 10 alertas/seg de la misma condición). Ahora es un **incidente** por
+`(deviceId, rule)` con máquina de estados:
+
+- **Motor con histéresis** (`AlertRules.Read` → `RuleReading`): bandas de disparo (warning/critical)
+  y de **despeje** separadas (abre a 95 °C, cierra a < 90) para evitar *flapping*; entre ambas, no
+  emite señal. Puro y sin estado.
+- **Máquina de estados** (`IncidentTransitions.Decide`, pura): abrir / escalar severidad / resolver.
+  Solo las **transiciones** se persisten y notifican; los firing repetidos solo actualizan el valor.
+- **Store `alert_incidents`** (Postgres + InMemory, interfaz `IAlertIncidentStore`): una fila por
+  `(device_id, rule)`. `ApplyAsync` reduce las lecturas del lote a la última por clave, decide
+  transiciones y hace upsert. Caché de **incidentes abiertos** para no consultar la BD por cada
+  lote de telemetría normal (los Clear solo importan si la clave está abierta).
+- **Worker/procesador**: emiten solo transiciones al canal de alertas; `/api/alerts` =
+  `GetActiveAsync` (abiertos primero). **Frontend**: `AlertStore` indexa por `incidentId` (upsert por
+  transición); UI con columna de estado (abierta/resuelta, filas resueltas atenuadas); el badge
+  cuenta solo **críticas abiertas**.
+
+### Hallazgos
+
+| Sev | Hallazgo | Acción | Estado |
+|-----|----------|--------|--------|
+| 🔴  | Alertas por-evento → inundación de ruido | Incidentes con estado + histéresis | Resuelto |
+| 🟠  | Telemetría normal emite señales Clear → SELECT por lote en Postgres | Caché de incidentes abiertos filtra los Clear irrelevantes | Resuelto |
+| 🟡  | La caché de abiertos es coherente en **un** proceso worker; a varias instancias haría falta particionar por dispositivo (FIFO) | Documentado (deuda, ligado a AUD-008/015) | Abierto (por diseño) |
+| 🟡  | Sin ack/resolución manual ni notificación externa (solo dashboard) | Fuera de alcance; idea registrada en AUD-015 A | Abierto |
+
+### Verificaciones
+
+- [x] `nx test api-tests`: **29/29** (reglas con histéresis + transiciones `Decide` + integración
+      InMemory abrir→resolver). `nx run-many -t build lint test` (5 proyectos) ✅
+- [x] **E2E** (Aws, simulador 1.500 ev/s × 30 s = 45.000 ev, 40 disp): `alert_incidents` = **65 filas**
+      (antes habrían sido miles), con **Open y Resolved** por regla (p. ej. overspeed 3 abiertas /
+      22 resueltas) → la histéresis abre y resuelve según el valor cruza las bandas. `/api/alerts`
+      devuelve 65 (33 abiertas primero, 32 resueltas).
+
+### Conclusión
+
+El alertado deja de ser un contador de cruces de umbral y pasa a un modelo de **incidentes** real:
+acotado (O(dispositivos×reglas), no O(eventos)), con apertura/escalado/resolución e histéresis
+anti-*flapping*. Con esto se cierra el Top 1 de AUD-015 y la **Fase 2.5 (calidad de datos)** queda
+completa (puntos 1–3).
+
+**Veredicto:** ✅ AUD-015 punto 1 cerrado. Fase 2.5 completa.
+
+---
+
 ## AUD-016 — Fase 2.5 (parte 1): retención por DROP PARTITION + data lake S3 idempotente (2026-06-22)
 
 **Fase:** Fase 2.5 — Calidad de datos (puntos 2 y 3 de [AUD-015](#aud-015--revisión-crítica-tras-fase-2--productivización-brechas-y-mejores-ideas-2026-06-22)).

@@ -18,7 +18,7 @@ public sealed class TelemetryProcessor(
     ITelemetryBus bus,
     IDeduplicator deduplicator,
     IDeviceStateStore store,
-    IAlertStore alertStore,
+    IAlertIncidentStore alertIncidents,
     ITelemetryArchive telemetryArchive,
     IHubContext<TelemetryHub> hub,
     ViewportRegistry viewport,
@@ -51,13 +51,13 @@ public sealed class TelemetryProcessor(
             if (fresh.Count > 0)
                 await telemetryArchive.AppendAsync(fresh, stoppingToken);
 
-            // Reglas por umbral (Fase 2): idéntico al worker, pero sobre el store en memoria.
-            var raised = fresh.SelectMany(AlertRules.Evaluate).ToList();
-            if (raised.Count > 0)
+            // Reglas por umbral como incidentes (AUD-016/p1): idéntico al worker, en memoria.
+            var readings = fresh.SelectMany(AlertRules.Read).ToList();
+            if (readings.Count > 0)
             {
-                var newAlerts = alertStore.Insert(raised);
-                if (newAlerts.Count > 0)
-                    await hub.Clients.All.SendAsync("alertsRaised", newAlerts, stoppingToken);
+                var transitions = await alertIncidents.ApplyAsync(readings, stoppingToken);
+                if (transitions.Count > 0)
+                    await hub.Clients.All.SendAsync("alertsRaised", transitions, stoppingToken);
             }
         }
     }

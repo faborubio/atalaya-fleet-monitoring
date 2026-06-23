@@ -36,9 +36,9 @@ public sealed class RedisAlertForwarder(
         if (!value.HasValue) return;
         try
         {
-            var alerts = JsonSerializer.Deserialize<Alert[]>(value!, Json);
-            if (alerts is { Length: > 0 })
-                _ = hub.Clients.All.SendAsync("alertsRaised", alerts, ct);
+            var incidents = JsonSerializer.Deserialize<AlertIncident[]>(value!, Json);
+            if (incidents is { Length: > 0 })
+                _ = hub.Clients.All.SendAsync("alertsRaised", incidents, ct);
         }
         catch (Exception ex)
         {

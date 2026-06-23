@@ -1,13 +1,18 @@
 /** Severidad de alerta (espejo de Atalaya.Contracts.AlertSeverity; serializa como string). */
 export type AlertSeverity = 'Warning' | 'Critical';
 
-/** Alerta por umbral (espejo de Atalaya.Contracts.Alert). */
-export interface Alert {
-  alertId: string;
+/** Estado de un incidente (espejo de Atalaya.Contracts.IncidentStatus). */
+export type IncidentStatus = 'Open' | 'Resolved';
+
+/** Incidente de alerta (espejo de Atalaya.Contracts.AlertIncident, AUD-016/p1). */
+export interface AlertIncident {
+  incidentId: string;
   deviceId: string;
   rule: string;
   severity: AlertSeverity;
+  status: IncidentStatus;
   value: number;
-  ts: string;
+  openedAt: string;
+  updatedAt: string;
   message: string;
 }

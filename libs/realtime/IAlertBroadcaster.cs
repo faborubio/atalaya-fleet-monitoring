@@ -9,5 +9,5 @@ namespace Atalaya.Realtime;
 /// </summary>
 public interface IAlertBroadcaster
 {
-    Task PublishAlertsAsync(IReadOnlyList<Alert> alerts, CancellationToken ct = default);
+    Task PublishAlertsAsync(IReadOnlyList<AlertIncident> incidents, CancellationToken ct = default);
 }

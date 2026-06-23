@@ -2,9 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace Atalaya.Contracts;
 
-/// <summary>Severidad de una alerta por umbral (SAD §6, tabla <c>alerts</c>).</summary>
-/// <remarks>Serializa como string ("Warning"/"Critical") en todo el cableado (Redis, SignalR,
-/// /api/alerts) para que el frontend reciba el nombre, no el índice.</remarks>
+/// <summary>Severidad de una alerta por umbral (SAD §6).</summary>
 [JsonConverter(typeof(JsonStringEnumConverter))]
 public enum AlertSeverity
 {
@@ -12,19 +10,30 @@ public enum AlertSeverity
     Critical,
 }
 
+/// <summary>Estado de un incidente de alerta.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum IncidentStatus
+{
+    Open,
+    Resolved,
+}
+
 /// <summary>
-/// Alerta por umbral disparada en el procesamiento (SAD §1.3: reglas, no ML). Es un derivado
-/// de un <see cref="TelemetryEvent"/>; alimenta el read model <c>alerts</c> y se notifica en
-/// vivo (ADR-002).
-/// <para><see cref="AlertId"/> es determinista (<c>{eventId}:{rule}</c>) para que la inserción
-/// sea idempotente bajo el at-least-once de SQS (ADR-006): reprocesar el mismo evento no duplica
-/// la alerta.</para>
+/// Incidente de alerta (AUD-016/p1): a diferencia del modelo por-evento anterior, una condición
+/// que cruza un umbral abre <b>un</b> incidente por <c>(deviceId, rule)</c> que vive hasta que la
+/// señal se normaliza (con histéresis). Solo las <b>transiciones</b> (abrir/escalar/resolver)
+/// generan notificación. <see cref="IncidentId"/> = <c>{deviceId}:{rule}</c>.
 /// </summary>
-public sealed record Alert(
-    string AlertId,
+public sealed record AlertIncident(
+    string IncidentId,
     string DeviceId,
     string Rule,
     AlertSeverity Severity,
+    IncidentStatus Status,
     double Value,
-    DateTimeOffset Ts,
-    string Message);
+    DateTimeOffset OpenedAt,
+    DateTimeOffset UpdatedAt,
+    string Message)
+{
+    public static string Id(string deviceId, string rule) => $"{deviceId}:{rule}";
+}

@@ -18,7 +18,7 @@ public sealed class SqsTelemetryConsumer(
     AwsOptions options,
     IEventDeduplicator deduplicator,
     IDeviceStateRepository repository,
-    IAlertRepository alertRepository,
+    IAlertIncidentStore alertIncidents,
     ITelemetryArchive telemetryArchive,
     IRawEventArchive rawArchive,
     ITelemetryBroadcaster broadcaster,
@@ -102,16 +102,16 @@ public sealed class SqsTelemetryConsumer(
                 await rawArchive.AppendAsync(fresh, ct);
                 metrics.AddArchived(fresh.Count);
 
-                // Reglas por umbral (Fase 2): evalúa sobre los eventos frescos, persiste de forma
-                // idempotente y notifica solo las alertas realmente nuevas (ADR-005/006).
-                var raised = fresh.SelectMany(AlertRules.Evaluate).ToList();
-                if (raised.Count > 0)
+                // Reglas por umbral como incidentes (AUD-016/p1): evalúa señales sobre los eventos
+                // frescos, aplica la máquina de estados y notifica solo las transiciones.
+                var readings = fresh.SelectMany(AlertRules.Read).ToList();
+                if (readings.Count > 0)
                 {
-                    var newAlerts = await alertRepository.InsertAsync(raised, ct);
-                    if (newAlerts.Count > 0)
+                    var transitions = await alertIncidents.ApplyAsync(readings, ct);
+                    if (transitions.Count > 0)
                     {
-                        await alertBroadcaster.PublishAlertsAsync(newAlerts, ct);
-                        metrics.AddAlerts(newAlerts.Count);
+                        await alertBroadcaster.PublishAlertsAsync(transitions, ct);
+                        metrics.AddAlerts(transitions.Count);
                     }
                 }
             }

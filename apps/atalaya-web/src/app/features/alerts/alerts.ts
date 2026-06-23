@@ -3,8 +3,9 @@ import { DatePipe, DecimalPipe } from '@angular/common';
 import { AlertStore } from '../../core/telemetry/alert-store';
 
 /**
- * Feature de alertas (Fase 2): lista en vivo de las alertas por umbral disparadas en el
- * worker (read model `alerts`, ADR-005) y notificadas por SignalR (ADR-002). OnPush + signals.
+ * Feature de alertas como incidentes (AUD-016/p1): cada fila es un incidente por
+ * `(dispositivo, regla)` con estado abierto/resuelto e histéresis (no una alerta por evento).
+ * OnPush + signals; los conteos cuentan solo incidentes abiertos.
  */
 @Component({
   selector: 'app-alerts',
@@ -14,46 +15,55 @@ import { AlertStore } from '../../core/telemetry/alert-store';
     <section class="feature">
       <h2>Alertas</h2>
       <p>
-        Alertas por umbral disparadas en los workers y notificadas en vivo
-        (read model <code>alerts</code>). Reglas, no ML (SAD §1.3).
+        Incidentes por umbral con <strong>histéresis</strong>: un incidente por
+        <code>(dispositivo, regla)</code> que abre, escala y se resuelve. Solo las transiciones se
+        notifican (AUD-016). Reglas, no ML (SAD §1.3).
       </p>
 
       <div class="alerts__counts">
-        <span class="pill pill--critical">{{ store.criticalCount() }} críticas</span>
-        <span class="pill pill--warning">{{ store.warningCount() }} aviso</span>
-        <span class="pill">{{ store.total() }} recientes</span>
+        <span class="pill pill--critical">{{ store.criticalCount() }} críticas abiertas</span>
+        <span class="pill pill--warning">{{ store.warningCount() }} aviso abiertas</span>
+        <span class="pill">{{ store.openCount() }} abiertas / {{ store.incidents().length }} totales</span>
       </div>
 
-      @if (store.alerts().length === 0) {
-        <p class="feature__status">Sin alertas todavía. Genera carga para verlas en vivo.</p>
+      @if (store.incidents().length === 0) {
+        <p class="feature__status">Sin incidentes todavía. Genera carga para verlos en vivo.</p>
       } @else {
         <table class="alerts__table">
           <thead>
             <tr>
+              <th>Estado</th>
               <th>Severidad</th>
               <th>Dispositivo</th>
               <th>Regla</th>
               <th>Valor</th>
-              <th>Hora</th>
+              <th>Abierto</th>
+              <th>Actualizado</th>
               <th>Detalle</th>
             </tr>
           </thead>
           <tbody>
-            @for (a of store.alerts(); track a.alertId) {
-              <tr>
+            @for (i of store.incidents(); track i.incidentId) {
+              <tr [class.is-resolved]="i.status === 'Resolved'">
+                <td>
+                  <span class="pill" [class.pill--open]="i.status === 'Open'">
+                    {{ i.status === 'Open' ? 'Abierta' : 'Resuelta' }}
+                  </span>
+                </td>
                 <td>
                   <span
                     class="pill"
-                    [class.pill--critical]="a.severity === 'Critical'"
-                    [class.pill--warning]="a.severity === 'Warning'"
-                    >{{ a.severity === 'Critical' ? 'Crítica' : 'Aviso' }}</span
+                    [class.pill--critical]="i.severity === 'Critical'"
+                    [class.pill--warning]="i.severity === 'Warning'"
+                    >{{ i.severity === 'Critical' ? 'Crítica' : 'Aviso' }}</span
                   >
                 </td>
-                <td>{{ a.deviceId }}</td>
-                <td><code>{{ a.rule }}</code></td>
-                <td>{{ a.value | number: '1.0-1' }}</td>
-                <td>{{ a.ts | date: 'HH:mm:ss' }}</td>
-                <td>{{ a.message }}</td>
+                <td>{{ i.deviceId }}</td>
+                <td><code>{{ i.rule }}</code></td>
+                <td>{{ i.value | number: '1.0-1' }}</td>
+                <td>{{ i.openedAt | date: 'HH:mm:ss' }}</td>
+                <td>{{ i.updatedAt | date: 'HH:mm:ss' }}</td>
+                <td>{{ i.message }}</td>
               </tr>
             }
           </tbody>

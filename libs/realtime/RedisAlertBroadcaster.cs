@@ -16,10 +16,10 @@ public sealed class RedisAlertBroadcaster(IConnectionMultiplexer redis) : IAlert
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-    public async Task PublishAlertsAsync(IReadOnlyList<Alert> alerts, CancellationToken ct = default)
+    public async Task PublishAlertsAsync(IReadOnlyList<AlertIncident> incidents, CancellationToken ct = default)
     {
-        if (alerts.Count == 0) return;
-        var payload = JsonSerializer.Serialize(alerts, Json);
+        if (incidents.Count == 0) return;
+        var payload = JsonSerializer.Serialize(incidents, Json);
         await redis.GetSubscriber().PublishAsync(RedisChannel.Literal(Channel), payload);
     }
 }

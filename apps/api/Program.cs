@@ -63,7 +63,7 @@ else
 {
     // El procesamiento corre en proceso (ADR-008 lo mueve al worker en modo Aws).
     builder.Services.AddSingleton<IDeviceStateStore, InMemoryDeviceStateStore>();
-    builder.Services.AddSingleton<IAlertStore, InMemoryAlertStore>();
+    builder.Services.AddSingleton<IAlertIncidentStore, InMemoryAlertIncidentStore>();
     builder.Services.AddSingleton<ITelemetryArchive, InMemoryTelemetryArchive>();
     builder.Services.AddSingleton<ITelemetryBus, InMemoryTelemetryBus>();
     builder.Services.AddSingleton<ITelemetryPublisher, InMemoryTelemetryPublisher>();
@@ -83,7 +83,7 @@ var app = builder.Build();
 if (useAws)
 {
     await app.Services.GetRequiredService<IDeviceStateRepository>().EnsureSchemaAsync();
-    await app.Services.GetRequiredService<IAlertRepository>().EnsureSchemaAsync();
+    await app.Services.GetRequiredService<IAlertIncidentStore>().EnsureSchemaAsync();
     await app.Services.GetRequiredService<ITelemetryArchive>().EnsureSchemaAsync();
 }
 
@@ -110,13 +110,14 @@ if (useAws)
 {
     app.MapGet("/api/devices", async (IDeviceStateRepository repo, CancellationToken ct) =>
         Results.Ok(await repo.GetAllAsync(ct)));
-    app.MapGet("/api/alerts", async (IAlertRepository repo, CancellationToken ct) =>
-        Results.Ok(await repo.GetRecentAsync(100, ct)));
+    app.MapGet("/api/alerts", async (IAlertIncidentStore store, CancellationToken ct) =>
+        Results.Ok(await store.GetActiveAsync(100, ct)));
 }
 else
 {
     app.MapGet("/api/devices", (IDeviceStateStore store) => Results.Ok(store.Snapshot()));
-    app.MapGet("/api/alerts", (IAlertStore store) => Results.Ok(store.Snapshot()));
+    app.MapGet("/api/alerts", async (IAlertIncidentStore store, CancellationToken ct) =>
+        Results.Ok(await store.GetActiveAsync(100, ct)));
 }
 
 // Camino frío (ADR-005/007): histórico por dispositivo desde la telemetría particionada.

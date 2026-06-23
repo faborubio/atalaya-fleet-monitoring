@@ -50,4 +50,13 @@
     background: #2d2113;
     color: #e3b341;
   }
+
+  &--open {
+    background: #132a1a;
+    color: #3fb950;
+  }
+}
+
+.alerts__table tr.is-resolved {
+  opacity: 0.5;
 }

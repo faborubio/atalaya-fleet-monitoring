@@ -10,15 +10,19 @@ que estresar.
 
 | | |
 |---|---|
-| **Versión** | 0.1.1 |
-| **Estado** | 🟢 Fases 1 + 1.5 completas — camino caliente sobre infra real + endurecimiento |
+| **Versión** | 0.3.0 |
+| **Estado** | 🟢 Fases 0→3 completas — feature-complete y verificado E2E (resto: solo-AWS-real + pulido) |
 | **Autor** | Fabián Rubio — Full Stack (foco Frontend / Angular) |
 | **Repositorio** | https://github.com/faborubio/atalaya-fleet-monitoring |
 | **Documento rector** | [SAD-Atalaya.md](./SAD-Atalaya.md) |
 
-> **Lo que ya funciona (verificado E2E):** `simulador → API → SNS → SQS → worker →
-> dedup(Redis) → Postgres (read model) → Redis → API → SignalR → dashboard Angular en vivo`,
-> reproducible en local con Docker. Ver [AUDIT.md](./AUDIT.md) (AUD-001…006).
+> **Lo que funciona (verificado E2E, reproducible en local con Docker):**
+> - **Camino caliente:** `simulador → API → SNS → SQS → worker → dedup(Redis) → Postgres → Redis → SignalR → dashboard en vivo`. Ingesta desacoplada (p95 `/ingest` ~34 ms, ~5.000 ev/s sin pérdida).
+> - **Alertas como incidentes** con histéresis (abrir/escalar/resolver, no por-evento) y push en vivo.
+> - **Camino frío:** telemetría particionada por tiempo (retención por `DROP PARTITION`) + data lake S3 idempotente + vista histórica.
+> - **Productivización:** infra como **AWS CDK** (desplegada a LocalStack), push **por viewport**, **readiness** (`/health/ready`) y graceful shutdown, tests de integración con **Testcontainers**.
+>
+> Detalle por fase en [AUDIT.md](./AUDIT.md) (AUD-001…018).
 
 ---
 
@@ -88,14 +92,14 @@ atalaya/
 ├─ apps/
 │  ├─ atalaya-web/      # SPA Angular: shell + features lazy; mapa en vivo (canvas) + tabla
 │  ├─ simulator/        # Generador de carga de telemetría (Node)
-│  ├─ api/              # .NET Minimal API + SignalR: ingesta→SNS, reenvío Redis→SignalR, lee read model
-│  ├─ worker/           # .NET Worker Service: consume SQS → dedup → Postgres → publica deltas
-│  └─ api.tests/        # xUnit: test de integración del camino caliente (sin Docker)
+│  ├─ api/              # .NET Minimal API + SignalR: ingesta→SNS, forwarders Redis→SignalR, read models, health
+│  ├─ worker/           # .NET Worker: SQS → dedup → read models + incidentes + camino frío (telemetry+S3) + retención
+│  └─ api.tests/        # xUnit: InMemory + lógica pura + Testcontainers (Postgres real)
 ├─ libs/
-│  ├─ contracts/        # DTOs .NET compartidos (TelemetryEvent, DeviceState)
-│  ├─ persistence/      # Read model en Postgres (Dapper/Npgsql)
-│  └─ realtime/         # Redis: dedup (ADR-006) + broadcaster pub/sub (ADR-002)
-├─ infra/               # docker-compose: LocalStack (SNS/SQS/S3) + Redis + Postgres
+│  ├─ contracts/        # DTOs + reglas (TelemetryEvent, DeviceState, AlertIncident, AlertRules, IncidentTransitions)
+│  ├─ persistence/      # Postgres: device_state + alert_incidents + telemetry particionada + retención (Dapper/Npgsql)
+│  └─ realtime/         # Redis: dedup (ADR-006) + broadcasters pub/sub deltas/alertas (ADR-002)
+├─ infra/               # docker-compose (LocalStack+Redis+Postgres) + cdk/ (AWS CDK, ADR-009)
 ├─ Atalaya.sln, nuget.config
 ├─ SAD-Atalaya.md       # Documento de arquitectura (rector)
 ├─ README.md            # Este archivo
@@ -145,8 +149,9 @@ node dist/apps/simulator/main.js --rate 1000 --devices 50 --duration 10 --url ht
 ```bash
 npx nx run-many -t build       # Angular + simulador + .NET
 npx nx run-many -t lint test   # lint + tests (front)
-npx nx test api-tests          # test de integración del camino caliente (.NET, sin Docker)
+npx nx test api-tests          # .NET: 32/32 con Docker (3 de Testcontainers); 29 + 3 saltados sin Docker
 ```
+Readiness: `curl localhost:3000/health/ready` (API) y `localhost:3100/health/ready` (worker).
 
 Más detalle (modos, endpoints, rollback) en [DEPLOY.md](./DEPLOY.md).
 
@@ -157,13 +162,17 @@ Más detalle (modos, endpoints, rollback) en [DEPLOY.md](./DEPLOY.md).
 | Fase | Alcance | Estado |
 |---|---|---|
 | **0 — Cimientos** | Monorepo Nx, esqueleto Angular + .NET, simulador, CI | ✅ |
-| **1 — Camino caliente** | Ingesta → SNS/SQS → worker → dedup(Redis) → Postgres → SignalR → dashboard | ✅ Sobre infra real, verificado E2E |
-| **1.5 — Endurecimiento** | Reconexión sin huecos, latencia OTel + P95, push endurecido, auth de ingesta, carga k6 | ✅ Hecho ([AUD-009](./AUDIT.md)); ⚠️ ingesta topa ~1k ev/s vs LocalStack (bottleneck documentado) |
-| **2 — Alertas + camino frío** | Reglas + read model de alertas, S3 data lake, telemetría particionada, histórico | ⬜ Pendiente |
-| **3 — Endurecimiento avanzado** | DLQ/replay, ingesta serverless a 5k ev/s, backplane SignalR nativo, CDK, seguridad OIDC | ⬜ Pendiente |
+| **1 — Camino caliente** | Ingesta → SNS/SQS → worker → dedup(Redis) → Postgres → SignalR → dashboard | ✅ E2E |
+| **1.5 — Endurecimiento** | Reconexión sin huecos, latencia OTel + P95, push endurecido, auth de ingesta, carga k6 | ✅ ([AUD-009](./AUDIT.md)) |
+| **— Ingesta desacoplada** | `/ingest` encola y responde 202; batch a SNS en background | ✅ p95 34 s→34 ms ([AUD-010](./AUDIT.md)) |
+| **2 — Alertas + camino frío** | Alertas (incidentes), telemetría particionada, S3 data lake, histórico | ✅ ([AUD-011](./AUDIT.md), [AUD-012](./AUDIT.md), [AUD-017](./AUDIT.md)) |
+| **— Productivización** | IaC con **AWS CDK** + grupos por **viewport** en SignalR | ✅ ([AUD-013](./AUDIT.md), [AUD-014](./AUDIT.md)) |
+| **2.5 — Calidad de datos** | Retención `DROP PARTITION` + S3 idempotente + alertas como incidentes con histéresis | ✅ ([AUD-016](./AUDIT.md), [AUD-017](./AUDIT.md)) |
+| **3 — Endurecimiento operativo** | Readiness/health, graceful shutdown, Testcontainers | ✅ ([AUD-018](./AUDIT.md)) |
+| **Resto (incremental / AWS real)** | Auth OIDC lecturas, DLQ replay, downsampling, deck.gl · **Athena** (cuenta AWS) | ⬜ Backlog ([AUD-015](./AUDIT.md)) |
 
 Cada fase entrega algo demostrable y medido. Ver detalle en el
-[SAD §13](./SAD-Atalaya.md#13-roadmap-por-fases).
+[SAD §13](./SAD-Atalaya.md#13-roadmap-por-fases) y la revisión crítica [AUD-015](./AUDIT.md).
 
 ---
 

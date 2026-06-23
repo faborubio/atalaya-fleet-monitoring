@@ -48,11 +48,12 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
 
 ## 5. Estado actual
 
-**Fecha de actualización:** 2026-06-22
+**Fecha de actualización:** 2026-06-23
 **Fase:** 1 + 1.5 + ingesta desacoplada ([AUD-010](./AUDIT.md)) + **Fase 2 completa** (alertas
-[AUD-011](./AUDIT.md) + camino frío [AUD-012](./AUDIT.md)) + **productivización**: CDK
-([AUD-013](./AUDIT.md)) + viewport ([AUD-014](./AUDIT.md)) + **Fase 2.5 calidad de datos**
-([AUD-016](./AUDIT.md), [AUD-017](./AUDIT.md)). Pendiente real: Athena (cuenta AWS).
+[AUD-011](./AUDIT.md) + camino frío [AUD-012](./AUDIT.md)) + **productivización** (CDK
+[AUD-013](./AUDIT.md) + viewport [AUD-014](./AUDIT.md)) + **Fase 2.5 calidad de datos**
+([AUD-016](./AUDIT.md) + [AUD-017](./AUDIT.md)) + **Fase 3 endurecimiento operativo**
+([AUD-018](./AUDIT.md)). **El producto está completo**; lo que resta es incremental o solo-AWS.
 
 ### Hecho
 - ✅ SAD v1.0.1 (ADR-001…011) + docs base. Repo en GitHub (12+ commits).
@@ -71,16 +72,21 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
   reconexión sin huecos · latencia P95 en dashboard + **OTel** en worker · push endurecido
   (await + coalescencia server-side + backpressure) · **auth de ingesta** (token + rate limit) ·
   **carga k6** + consumidores SQS en paralelo.
-- ✅ **Fase 2 — alertas por umbral** ([AUD-011](./AUDIT.md)): motor de reglas puro (`AlertRules`
-  en contracts) → read model `alerts` (Postgres, insert idempotente) → worker publica a canal
-  Redis `atalaya:alerts:new` → API `RedisAlertForwarder`→SignalR (`alertsRaised`) → feature
-  `alerts` (tabla en vivo + conteos, badge de críticas en nav). Paridad InMemory para tests.
-  Verificado E2E. Métrica `atalaya.alerts.raised`.
+- ✅ **Fase 2 — alertas** (inicial [AUD-011](./AUDIT.md), **rehecho como incidentes** [AUD-017](./AUDIT.md)):
+  reglas con histéresis + máquina de estados → read model `alert_incidents` (una fila por `(device,rule)`)
+  → Redis `atalaya:alerts:new` → API `RedisAlertForwarder`→SignalR (`alertsRaised`, `AlertIncident[]`)
+  → feature `alerts` (estado abierta/resuelta, badge de críticas abiertas). Paridad InMemory. Verificado E2E.
 - ✅ **Fase 2 — camino frío** ([AUD-012](./AUDIT.md)): tabla `telemetry` **particionada por tiempo**
-  (`PostgresTelemetryArchive`, particiones diarias perezosas, retención O(1)) + **S3 data lake**
-  (`S3RawEventArchive` en worker, `raw/yyyy/MM/dd/`) → `GET /api/history` → feature `history`
-  (selector + gráfico SVG + tabla). Paridad InMemory. Verificado E2E (4.950 filas, 10 objetos S3).
-  Métrica `atalaya.telemetry.archived`. Athena = solo AWS real (deuda documentada).
+  (`PostgresTelemetryArchive`, particiones diarias perezosas) + **S3 data lake** (`S3RawEventArchive`,
+  clave por hash de contenido [AUD-016](./AUDIT.md)) → `GET /api/history` → feature `history`
+  (selector + gráfico SVG + tabla). Paridad InMemory. Métrica `atalaya.telemetry.archived`.
+- ✅ **Productivización**: **CDK** ([AUD-013](./AUDIT.md), `infra/cdk/`, synth + `cdklocal deploy`) +
+  **grupos por viewport** SignalR ([AUD-014](./AUDIT.md), push O(viewport), opt-in sin regresión).
+- ✅ **Fase 2.5 calidad de datos** ([AUD-016](./AUDIT.md) + [AUD-017](./AUDIT.md)): retención por
+  **DROP PARTITION** (job en worker) + **S3 idempotente** + **alertas como incidentes** con histéresis.
+- ✅ **Fase 3 endurecimiento operativo** ([AUD-018](./AUDIT.md)): **readiness** gateada (`/health/ready`
+  API+worker, checks Postgres/Redis/SNS/SQS) + **graceful shutdown** (drena el buffer de ingesta) +
+  **Testcontainers** (tests del SQL real, skippables sin Docker). Verificado E2E (ready→503 con Redis caído).
 
 ### ✅ Hallazgo de carga de AUD-009 — RESUELTO ([AUD-010](./AUDIT.md))
 El cuello era el **`PublishAsync` síncrono a SNS por request** (p95 de `/ingest` = 34 s bajo
@@ -114,8 +120,11 @@ cero pérdida (59.200/59.200). Deuda menor: reintento/persistencia ante `Publish
   viewport). Dashboard: control Todo/2×/4×. Opt-in: sin clientes viewport, idéntico al firehose.
 - **IaC (AUD-013)**: `infra/cdk/` (proyecto standalone). `npm run synth` / `deploy:local` (cdklocal).
   Requiere `aws-cdk-local` 3.x con la CLI nueva ([TS-007](./TROUBLESHOOTING.md)).
+- **Fase 3 operativo (AUD-018)**: API `/health/live` + `/health/ready` (deps); worker health en
+  `:3100` (config `Health:Port`). `SnsBatchPublisher` drena el buffer al apagar. Tests Postgres reales
+  con Testcontainers (se **saltan** si no hay Docker). Retención: config `Retention:Days`/`IntervalHours`.
 - Interfaces de extensión (para swaps sin reescribir): `ITelemetryPublisher`, `IDeviceStateRepository`,
-  `IAlertRepository`, `ITelemetryArchive`, `IRawEventArchive`, `IEventDeduplicator`,
+  `IAlertIncidentStore`, `ITelemetryArchive`, `IRawEventArchive`, `IEventDeduplicator`,
   `ITelemetryBroadcaster`, `IAlertBroadcaster`.
 - `nuget.config` en la raíz ([TS-004](./TROUBLESHOOTING.md#ts-004--dotnet-no-resuelve-paquetes-nuget-sin-fuentes)).
 
@@ -128,35 +137,32 @@ npm start               # dashboard :4200
 npx nx build simulator
 node dist/apps/simulator/main.js --rate 2000 --devices 100 --duration 30 --url http://localhost:3000/ingest --token dev-ingest-token
 ```
-Verificación: `npx nx run-many -t build` · `nx test api-tests` · `npx nx run-many -t lint test`.
-Carga: ver [DEPLOY.md §1.6](./DEPLOY.md) (k6 vía Docker).
+Verificación: `npx nx run-many -t build lint test` · `nx test api-tests` (**32/32** con Docker;
+**29 + 3 saltados** sin Docker, por los tests de Testcontainers). Health: `curl :3000/health/ready`
+y `:3100/health/ready` (worker). Carga: ver [DEPLOY.md §1.6](./DEPLOY.md) (k6 vía Docker).
 
 ### Pendiente (próxima sesión)
-- ~~Resolver el cuello de botella de ingesta~~ ✅ HECHO ([AUD-010](./AUDIT.md): desacople + batch a SNS).
-  Deuda residual menor: reintento/persistencia ante `PublishBatch` fallido (hoy se loguea y se pierde).
-- ~~Fase 2 — alertas por umbral + read model de alertas~~ ✅ HECHO ([AUD-011](./AUDIT.md)).
-- ~~Fase 2 — camino frío (telemetry particionada + S3 data lake + vista histórica)~~ ✅ HECHO ([AUD-012](./AUDIT.md)).
-- ~~Productivizar: infra con **CDK** (ADR-009)~~ ✅ HECHO ([AUD-013](./AUDIT.md)): `infra/cdk/`
-  (`cdk synth` offline + `cdklocal deploy` verificado). El `01-resources.sh` queda como atajo de dev.
-- ~~Grupos por viewport en SignalR (AUD-008)~~ ✅ HECHO ([AUD-014](./AUDIT.md)): push O(viewport),
-  opt-in sin regresión (firehose por defecto); control Todo/2×/4× en el dashboard.
-- **Productivizar (resto)**: **Athena** sobre el data lake S3 (solo AWS real, pendiente de cuenta).
-- ~~**Fase 2.5 calidad de datos** (Top de [AUD-015](./AUDIT.md))~~ ✅ HECHO: retención por DROP
-  PARTITION + S3 idempotente ([AUD-016](./AUDIT.md)) + alertas como **incidentes** con histéresis
-  ([AUD-017](./AUDIT.md)). Verificado E2E.
-- ~~**Fase 3 endurecimiento operativo**: readiness + graceful shutdown + Testcontainers~~ ✅ HECHO
-  ([AUD-018](./AUDIT.md)). `/health/live` + `/health/ready` (API y worker); drenado del buffer al
-  apagar; tests Postgres reales (skippables sin Docker). Verificado E2E (ready→503 con Redis caído).
-- **Revisión crítica [AUD-015](./AUDIT.md)** — restante: durabilidad del borde de ingesta (API GW→SNS),
-  auth de lecturas (OIDC/JWT), DLQ replay, downsampling del histórico, virtual scroll/mapa. Incremental.
-- Deuda menor: reintento/persistencia ante `PublishBatch` fallido (AUD-010); el simulador no genera
-  valores de alerta crítica (solo aviso), lo crítico solo se ve por unit test (AUD-011).
+**No quedan fases de features** — el producto (mapa, dispositivos, alertas-incidentes, históricos)
+está completo y verificado E2E. Lo que resta es **endurecimiento incremental** y **solo-AWS-real**:
+
+- **Fase 3 — resto** (SAD §10, local, sin urgencia): **auth de lecturas (OIDC/JWT)** ← el de más peso ·
+  DLQ **replay** · downsampling del histórico · virtual scroll + mapa real (deck.gl) · runbooks.
+- **Solo AWS real** (requiere cuenta, hoy bloqueado): **Athena** sobre el data lake S3 · medir
+  throughput contra AWS · CDK multi-entorno (dev/staging/prod).
+- **Deuda menor anotada**: durabilidad del borde de ingesta = best-effort (drena al apagar, pero
+  el 202 es previo a durabilidad → real: API GW→SNS, AUD-015 B) · reintento ante `PublishBatch`
+  fallido (AUD-010) · caché de incidentes abiertos coherente solo en 1 worker (FIFO si hay varias
+  instancias, AUD-017) · el simulador no genera valores críticos (lo crítico solo por unit test).
 
 ### Toolchain verificado (2026-06-21)
 - ✅ git 2.51 · Node v24.15 · npm 11.14 · Nx 21.6.11 · **.NET SDK 8.0.422** · **Docker 29.5.3**
 - ⚠️ **Almacén de Docker movido a `D:\DockerData`** (C: se había llenado a 0 bytes, TS-006).
   Hay un junction en `%LOCALAPPDATA%\Docker\wsl\disk` → `D:\DockerData\disk`. No lo borres.
 - ⚠️ Disco **C: muy justo**: vigilar espacio antes de pulls grandes.
+- ⚠️ **Docker no está en PATH**; el binario está en `C:\Program Files\Docker\Docker\resources\bin`.
+  Docker Desktop a veces hay que **arrancarlo** (`Docker Desktop.exe`); los tests de Testcontainers
+  y el pipeline real lo necesitan. `nx serve` deja procesos `dotnet`/`Atalaya.*` que **bloquean DLLs**
+  al recompilar: mátalos (`Stop-Process -Name dotnet,Atalaya.Api,Atalaya.Worker -Force`) si un build falla por lock.
 
 ### Estructura actual del repo
 ```
@@ -164,18 +170,17 @@ atalaya/
 ├─ apps/
 │  ├─ atalaya-web/   # SPA Angular (shell + features lazy)
 │  ├─ simulator/     # generador de carga de telemetría (Node)
-│  ├─ api/           # .NET Minimal API + SignalR + ingesta(SNS) + forwarders Redis→SignalR (deltas/alertas) + auth
-│  ├─ worker/        # .NET Worker: SQS → dedup → read models + alertas + camino frío (telemetry+S3); OTel
-│  └─ api.tests/     # xUnit: caliente + alertas + histórico (InMemory) + reglas + batching SNS
-├─ libs/contracts/   # DTOs .NET compartidos (TelemetryEvent, DeviceState, Alert, AlertRules)
-├─ libs/persistence/ # Postgres: device_state + alerts + telemetry particionada + IRawEventArchive (Dapper/Npgsql)
-├─ libs/realtime/    # Redis: dedup (ADR-006) + broadcaster pub/sub (ADR-002)
-├─ infra/            # docker-compose (LocalStack+Redis+Postgres) + load/ingest.js (k6)
+│  ├─ api/           # .NET Minimal API + SignalR + ingesta(SNS) + forwarders Redis→SignalR + health
+│  ├─ worker/        # .NET Worker: SQS → dedup → read models + incidentes + camino frío + retención + health; OTel
+│  └─ api.tests/     # xUnit: InMemory (caliente/incidentes/histórico/viewport) + puros + Testcontainers (Postgres real)
+├─ libs/contracts/   # DTOs (TelemetryEvent, DeviceState, AlertIncident, AlertRules, IncidentTransitions)
+├─ libs/persistence/ # Postgres: device_state + alert_incidents + telemetry particionada + retención + IRawEventArchive
+├─ libs/realtime/    # Redis: dedup (ADR-006) + broadcasters pub/sub deltas/alertas (ADR-002)
+├─ infra/            # docker-compose (LocalStack+Redis+Postgres) + cdk/ (AWS CDK, ADR-009) + load/ingest.js (k6)
 ├─ Atalaya.sln, nuget.config
 ├─ *.md              # SAD, README, AUDIT, DEPLOY, TROUBLESHOOTING, CLAUDE
 └─ nx.json, package.json, tsconfig.base.json, eslint.config.mjs
 ```
-Pendiente de crear: infra como **AWS CDK** (ADR-009). (S3 data lake + tabla `telemetry` ✅ AUD-012.)
 
 ## 6. Decisiones de arquitectura clave (resumen — el detalle está en el SAD)
 
@@ -196,11 +201,15 @@ Pendiente de crear: infra como **AWS CDK** (ADR-009). (S3 data lake + tabla `tel
 
 ## 7. Próximos pasos sugeridos (para la nueva sesión)
 
-1. **Leer este archivo + [AUD-011](./AUDIT.md) y [AUD-012](./AUDIT.md)** (Fase 2: alertas + camino frío).
-2. ~~Desacoplar el publish a SNS~~ ✅ ([AUD-010](./AUDIT.md)). ~~Fase 2 alertas~~ ✅ ([AUD-011](./AUDIT.md)).
-   ~~Fase 2 camino frío~~ ✅ ([AUD-012](./AUDIT.md)).
-3. ~~Productivizar: **CDK** (ADR-009)~~ ✅ ([AUD-013](./AUDIT.md)). ~~Grupos por viewport~~ ✅ ([AUD-014](./AUDIT.md)).
-4. Pendiente real: **Athena** sobre el data lake S3 (requiere cuenta AWS); medir throughput contra AWS real.
+**Estado:** Fases 0→3 completas (ver §5). Producto feature-complete y verificado E2E. Último commit
+de contexto: AUD-018 (Fase 3 operativo). Para retomar, leer §5 + la **revisión crítica [AUD-015](./AUDIT.md)**
+(backlog priorizado) y el último audit [AUD-018](./AUDIT.md).
+
+Candidatos (orden de valor, todos locales salvo donde se indique):
+1. **Auth de lecturas (OIDC/JWT)** en `/api/*` y el hub — el de más peso del backlog (AUD-015 D).
+2. **DLQ replay** + backoff/circuit-breaker (AUD-015 E) · **downsampling** del histórico (AUD-015 C).
+3. **Frontend**: virtual scroll en tablas + mapa real (deck.gl/Mapbox) (AUD-015 G).
+4. **Solo AWS real** (requiere cuenta): **Athena** sobre el data lake · throughput real · CDK multi-entorno.
 
 > Al cerrar cada sesión: actualiza §5 (estado), añade entrada en AUDIT.md si hubo cambio
 > auditable, y registra en TROUBLESHOOTING.md cualquier error resuelto.

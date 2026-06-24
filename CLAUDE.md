@@ -54,7 +54,7 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
 
 ## 5. Estado actual
 
-**Fecha de actualización:** 2026-06-23
+**Fecha de actualización:** 2026-06-24
 **Fase:** 1 + 1.5 + ingesta desacoplada ([AUD-010](./AUDIT.md)) + **Fase 2 completa** (alertas
 [AUD-011](./AUDIT.md) + camino frío [AUD-012](./AUDIT.md)) + **productivización** (CDK
 [AUD-013](./AUDIT.md) + viewport [AUD-014](./AUDIT.md)) + **Fase 2.5 calidad de datos**
@@ -102,6 +102,11 @@ roadmap G0…G6): **G1 (Pub/Sub)** ([AUD-021](./AUDIT.md)) y **G2 (data lake en 
   `/api/devices|alerts|history` y el hub (token por `?access_token=`). Emisor dev `/auth/dev-token` +
   dashboard con **auto-token silencioso** (interceptor `/api/*` + `accessTokenFactory`). La ingesta no
   cambia (token de dispositivo). 39/39 tests + E2E en vivo (401/200/400/403).
+- ✅ **Pivote a GCP — G1/G2/G3** (ADR-013, [AUD-020](./AUDIT.md)…[AUD-023](./AUDIT.md)): **Pub/Sub**
+  (publisher+consumer tras flag `Telemetry:Transport=Gcp`, DLQ+veneno) · **Cloud Storage** data lake
+  (`GcsRawEventArchive`, dedup check+commit) · **Identity Platform** auth OIDC real (login Firebase,
+  RBAC por custom claim). Verificados E2E contra emuladores (G1/G2) y el proyecto real
+  **fabian-portafolio** (G3). 42/42 tests. **Siguiente: G4 BigQuery** (ver §7).
 
 ### ✅ Hallazgo de carga de AUD-009 — RESUELTO ([AUD-010](./AUDIT.md))
 El cuello era el **`PublishAsync` síncrono a SNS por request** (p95 de `/ingest` = 34 s bajo
@@ -238,7 +243,7 @@ atalaya/
 ├─ libs/contracts/   # DTOs (TelemetryEvent, DeviceState, AlertIncident, AlertRules, IncidentTransitions)
 ├─ libs/persistence/ # Postgres: device_state + alert_incidents + telemetry particionada + retención + IRawEventArchive
 ├─ libs/realtime/    # Redis: dedup (ADR-006) + broadcasters pub/sub deltas/alertas (ADR-002)
-├─ infra/            # docker-compose (LocalStack+Redis+Postgres) + cdk/ (AWS CDK, ADR-009) + load/ingest.js (k6)
+├─ infra/            # docker-compose (LocalStack+Redis+Postgres + pubsub-emulator/fake-gcs perfil gcp) + cdk/ + load/ingest.js (k6)
 ├─ Atalaya.sln, nuget.config
 ├─ *.md              # SAD, README, AUDIT, DEPLOY, TROUBLESHOOTING, CLAUDE
 └─ nx.json, package.json, tsconfig.base.json, eslint.config.mjs
@@ -266,13 +271,28 @@ atalaya/
 
 ## 7. Próximos pasos sugeridos (para la nueva sesión)
 
-**Estado:** Fases 0→3 completas en **AWS/LocalStack** (ver §5). **Decisión activa: pivote a GCP**
-([ADR-013](./SAD-Atalaya.md) / [AUD-020](./AUDIT.md)) — decidido y documentado, **sin implementar**.
-Para retomar, leer §1 (banner de pivote) + §5 + [AUD-020](./AUDIT.md) (roadmap G0…G6) + ADR-013.
+**Estado:** Fases 0→3 completas en AWS/LocalStack + **pivote a GCP G1/G2/G3 hechos y verificados E2E**
+([AUD-021](./AUDIT.md)/[AUD-022](./AUDIT.md)/[AUD-023](./AUDIT.md)). Último commit: **G3** (`e8d48d9`,
+auth OIDC real). **Siguiente: G4 (BigQuery).** Para retomar, leer §1 (banner de pivote) + §5 +
+[AUD-020](./AUDIT.md) (roadmap) + el último audit [AUD-023](./AUDIT.md).
+
+> **Flujo por fase G (acordado, [memoria] `gcp-phase-workflow`):** implementar → **verificar E2E real**
+> (no solo build/tests) → **revisión crítica** → aplicar el fix que surja → documentar en los .md →
+> **commit + push** a `origin main`. La revisión crítica va **antes** del push. En G1 halló el gap de
+> DLQ; en G2 la pérdida por dedup-antes-de-efectos; en G3 el WebSocket vivo tras logout.
+
+**Para correr el pipeline GCP (emuladores, costo $0):**
+```
+docker compose -f infra/docker-compose.yml up -d redis postgres pubsub-emulator fake-gcs
+$env:Telemetry__Transport="Gcp"; npx nx serve api        # + worker igual
+```
+Auth Oidc real (G3): API con `Auth__Mode=Oidc` + `Auth__ProjectId=fabian-portafolio` valida tokens de
+Identity Platform; dashboard en modo firebase = `useFirebaseAuth=true` en `app.config.ts`.
 
 **Roadmap del pivote a GCP (orden de ejecución, cada fase verificable):**
-0. **G0 — Fundaciones**: crear proyecto GCP + **Budget+Alert** (tope, protege los ~$200) · habilitar
-   APIs · service accounts. ✋ Necesita al usuario. Docs ya hechas.
+0. **G0 — Fundaciones**: proyecto GCP + **Budget+Alert** (tope) · habilitar APIs · service accounts.
+   Hecho parcial: proyecto **fabian-portafolio** existe (Identity Platform activo en G3). Falta budget
+   alert + habilitar BigQuery para G4. ✋ Pasos de consola los hace el usuario.
 1. **G1 — Pub/Sub** ✅ **HECHO** ([AUD-021](./AUDIT.md)): `GcpPubSubBatchPublisher` (API) +
    `GcpPubSubConsumer` (worker) tras el flag `Telemetry:Transport=Gcp`, lote común en
    `TelemetryBatchProcessor`, readiness `IWorkerReadiness`. Verificado E2E contra el emulador.
@@ -283,11 +303,20 @@ Para retomar, leer §1 (banner de pivote) + §5 + [AUD-020](./AUDIT.md) (roadmap
    authority/audience de Identity Platform; login real Angular (Firebase Auth, dynamic-import);
    roles por custom claim (`scripts/set-role.mjs`). Verificado E2E contra `fabian-portafolio`
    (401/403/200). Proyecto real: **fabian-portafolio**; test user `atalaya-test@atalaya.dev`.
-4. **G4 — BigQuery**: data lake GCS → BigQuery (cierra Athena).
+4. **G4 — BigQuery (SIGUIENTE)**: consultas analíticas sobre el data lake GCS (cierra Athena). Notas
+   para arrancar: el lake está en el bucket **`atalaya-datalake`**, objetos JSON en
+   `raw/yyyy/MM/dd/{sha256}.json` (un array de `TelemetryEvent` por objeto, escrito por
+   `GcsRawEventArchive`). Opción A: **external table** de BigQuery sobre `gs://atalaya-datalake/raw/*`
+   (JSON newline-delimited — ⚠️ hoy cada objeto es un **array** JSON, no NDJSON; quizá haya que ajustar
+   el formato de escritura a una línea por evento, o usar `JSON`/wildcard + UNNEST). Opción B: cargar a
+   una tabla nativa. Requiere proyecto real (fabian-portafolio) + dataset BigQuery + habilitar la API.
+   **No hay emulador de BigQuery decente** → se valida contra BigQuery real (free-tier 1 TB consultas/mes
+   cubre esto; vigilar budget). Posible endpoint nuevo tipo `/api/analytics` o solo consultas documentadas.
 5. **G5 — IaC Terraform + despliegue Cloud Run** (API+worker) + SPA a Firebase Hosting.
 6. **G6 — Medición real** (k6 contra Pub/Sub real) + **script de teardown** (apagar Cloud SQL/Memorystore).
 
-⚠️ **Costo**: Cloud SQL/Memorystore cobran ociosos → Budget+Alert + teardown obligatorios.
+⚠️ **Costo**: BigQuery pay-per-byte (free-tier cubre dev); Cloud SQL/Memorystore cobran ociosos →
+Budget+Alert + teardown obligatorios.
 Backlog AWS-era que aplica igual en GCP (de [AUD-015](./AUDIT.md)): DLQ replay, downsampling, virtual
 scroll + mapa real (deck.gl), login real/refresh-token.
 

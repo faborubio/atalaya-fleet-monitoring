@@ -22,6 +22,7 @@ public sealed class ViewportTests : IClassFixture<WebApplicationFactory<Program>
         {
             b.UseSetting("Telemetry:Transport", "InMemory");
             b.UseSetting("Ingest:Token", "");
+            b.UseSetting("Auth:Mode", "Disabled"); // cubre los grupos por viewport, no la auth
         });
     }
 

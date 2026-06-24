@@ -36,6 +36,182 @@ proyecto.
 
 ---
 
+## AUD-021 — Pivote a GCP · G1: mensajería Pub/Sub tras el flag (2026-06-23)
+
+**Fase:** Pivote a GCP ([ADR-013](./SAD-Atalaya.md)), **fase G1** del roadmap de [AUD-020](#aud-020--decisión-pivote-de-nube-aws--gcp-2026-06-23). Primera implementación real del pivote.
+**Alcance:** Adaptador de Google Cloud Pub/Sub (publicador + consumidor) seleccionable por el flag
+`Telemetry:Transport=Gcp`, verificado contra el **emulador** local (costo $0).
+**Auditor:** Fabián Rubio + Claude
+
+### Qué se hizo (respetando ADR-011: tras las interfaces existentes)
+
+- **API (publicador):** `GcpPubSubBatchPublisher` (BackgroundService) espeja al `SnsBatchPublisher`:
+  drena el canal del `QueueingTelemetryPublisher`, coalesce ráfagas y publica al topic por lotes
+  (cada mensaje = array JSON de ≤N eventos, **mismo formato de cuerpo** que SNS+RawMessageDelivery,
+  así el consumidor no distingue el broker). `QueueingTelemetryPublisher` se generalizó (capacidad
+  por valor, ya no depende de `AwsOptions`). Readiness: `PubSubHealthCheck` (topic alcanzable).
+- **Worker (consumidor):** `GcpPubSubConsumer` (SubscriberClient de alto nivel: streaming pull,
+  concurrencia, ack/nack). El procesamiento de lote se **extrajo** a `TelemetryBatchProcessor`
+  (común a SQS y Pub/Sub): dedup → upsert → push → camino frío → incidentes, idéntico e
+  independiente del broker. Readiness abstraída en `IWorkerReadiness` (`SqsReadiness`/`PubSubReadiness`);
+  `WorkerHealthService` ya no depende de SQS.
+- **Topología autoprovisionada** contra el emulador (crea topic+suscripción al arrancar, idempotente);
+  en la nube real la creará Terraform (G5). El cliente apunta al emulador vía `PUBSUB_EMULATOR_HOST`
+  (de `Gcp:EmulatorHost`), sin credenciales ni coste.
+- **Resiliencia de entrega (paridad con SQS, tras revisión crítica del G1):**
+  - **DLQ:** la suscripción se crea con `DeadLetterPolicy` (topic `atalaya-telemetry-dlq`,
+    `MaxDeliveryAttempts=5`), espejo del redrive de SQS. En GCP real exige IAM al service account de
+    Pub/Sub (lo dará Terraform, G5); el emulador acepta la config.
+  - **Mensaje envenenado:** el handler distingue **veneno** (cuerpo que no deserializa → `Ack` +
+    log + métrica `atalaya.events.poison`, sin reintentar en bucle) de **transitorio** (BD/Redis →
+    `Nack`, reintenta; tras 5 va a la DLQ). Evita el redelivery infinito del emulador.
+  - **Arranque robusto:** `EnsureTopology` reintenta ante transitorios gRPC (emulador aún
+    levantando handshake HTTP/2) en vez de tirar el worker (`BackgroundService`→`StopHost`).
+- **Infra:** servicio `pubsub-emulator` en docker-compose bajo perfil `gcp` (no arranca por defecto;
+  el flujo AWS queda intacto). Secciones `Gcp` en appsettings de api/worker. Tests fuerzan InMemory.
+- **El data lake crudo (S3→GCS) NO entra aún** (es G2): en modo Gcp `IRawEventArchive` = `NullRawEventArchive`.
+
+### Hallazgos
+
+| Sev | Hallazgo | Acción | Estado |
+|-----|----------|--------|--------|
+| 🟢  | Paridad de transporte AWS↔GCP tras las interfaces, sin tocar el dominio | `TelemetryBatchProcessor` común + flag `Gcp` | Resuelto |
+| 🟠  | **Sin DLQ ni manejo de veneno** (revisión crítica): la suscripción no tenía dead-letter y el handler hacía `Nack` ante cualquier error → redelivery infinito de un mensaje envenenado | `DeadLetterPolicy` (5 intentos) + handler veneno(`Ack`+métrica)/transitorio(`Nack`) | Resuelto |
+| 🟠  | **Arranque frágil:** un transitorio gRPC al crear la topología tiraba el worker entero (`StopHost`) | Reintento acotado en `EnsureTopology` | Resuelto |
+| 🟡  | El camino frío crudo no tiene equivalente GCP todavía | `NullRawEventArchive` en modo Gcp; GCS llega en G2 | Abierto (planeado) |
+| 🔵  | Transición de incidente puede duplicarse bajo concurrencia (leer→decidir→upsert sin tx) | Pre-existente (AWS N=2), ampliado por Pub/Sub; dedup por eventId protege el read model | Anotado |
+
+### Verificaciones
+
+- [x] `dotnet build Atalaya.sln` ✅ · `nx test api-tests`: **42/42** (39 + **3 nuevos** del troceo Pub/Sub).
+- [x] **E2E contra el emulador** (`docker compose up -d redis postgres pubsub-emulator`, api+worker en
+      `Telemetry:Transport=Gcp`): `/health/ready`→**200** (gateado por Postgres+Redis+**Pub/Sub**);
+      `POST /ingest`→**202**; los eventos atraviesan **API→Pub/Sub→worker→Postgres** y aparecen en
+      `/api/devices` con **valores correctos** (`gcp-dev-3` engineTempC=85 sano; `gcp-dev-4`
+      engineTempC=120 → incidente **engine-temp-high Critical**); `/api/history` devuelve el archivado.
+- [x] **E2E del veneno:** mensaje malformado publicado directo al topic → worker loguea
+      "envenenado…se descarta", incrementa `atalaya.events.poison` y **sigue vivo** (sin bucle); un
+      evento válido posterior se procesa normal. Topología creada con `DeadLetterPolicy` (5 intentos).
+- [x] El flujo AWS (LocalStack) sigue intacto: el branch `Aws` no cambió su comportamiento.
+
+### Conclusión
+
+Primera pieza del pivote en pie y probada de verdad contra un broker real (emulado): el mismo
+producto corre sobre Pub/Sub cambiando solo el flag. Confirma que el desacoplamiento por interfaces
+(ADR-011) aguanta el cambio de proveedor. Sigue **G2** (GCS + Cloud SQL) y la topología real en G5.
+
+**Veredicto:** ✅ G1 cerrada y verificada E2E contra el emulador.
+
+---
+
+## AUD-020 — Decisión: pivote de nube AWS → GCP (2026-06-23)
+
+**Fase:** Decisión de arquitectura ([ADR-013](./SAD-Atalaya.md)). **Es una decisión + roadmap, NO una
+implementación**: a esta fecha **nada está migrado**; el sistema sigue corriendo contra AWS/LocalStack.
+**Alcance:** Reorientar el target cloud del portafolio a Google Cloud y planificar la migración.
+**Auditor:** Fabián Rubio + Claude
+
+### Qué se decidió
+
+- **Pivote a GCP** (cuenta con presupuesto ~US$200): la narrativa pasa a *"Angular/.NET/GCP
+  event-driven con despliegue real"*. Razón: desplegar en una **nube real** pesa más que "probado
+  contra LocalStack", y valida que el desacoplamiento por interfaces ([ADR-011](./SAD-Atalaya.md))
+  resiste un cambio de proveedor. Mapeo de servicios y trade-offs en [ADR-013](./SAD-Atalaya.md).
+- **Se preserva ADR-011**: las implementaciones GCP entran **tras las interfaces existentes**
+  (`ITelemetryPublisher`, `IRawEventArchive`, …), por el flag de transporte (nuevo valor `Gcp`), y el
+  desarrollo usa **emuladores locales** (Pub/Sub emulator, `fake-gcs-server`) para no gastar; la nube
+  real se reserva para validar/demostrar. Tests siguen en `InMemory`.
+
+### Roadmap de ejecución (incremental, cada fase verificable)
+
+| Fase | Qué | Costo dev | Estado |
+|------|-----|-----------|--------|
+| **G0** | Fundaciones: ADR-013 + docs · proyecto GCP · **Budget+Alert** (tope) · habilitar APIs · service accounts | $0 | ⬜ (docs ✅) |
+| **G1** | Mensajería **Pub/Sub**: `PubSubBatchPublisher` + consumidor en worker, tras el flag; E2E contra el **emulador** | $0 | ✅ ([AUD-021](#aud-021--pivote-a-gcp--g1-mensajería-pubsub-tras-el-flag-2026-06-23)) |
+| **G2** | **GCS** + camino frío: `GcsRawEventArchive` (fake-gcs local) · Cloud SQL = solo connection string | $0 | ⬜ |
+| **G3** | **Auth Identity Platform**: `Auth:Mode=Oidc` real · login en Angular (Firebase Auth) · roles por custom claims | ~$0 | ⬜ |
+| **G4** | **BigQuery**: data lake GCS → BigQuery (external/load) · consultas analíticas (cierra Athena) | bajo | ⬜ |
+| **G5** | **IaC Terraform** + despliegue **Cloud Run** (API+worker) + SPA a **Firebase Hosting** | medio | ⬜ |
+| **G6** | Medición real: k6 contra Pub/Sub **real** · latencia/throughput de verdad · script de **teardown** | bajo | ⬜ |
+
+### Hallazgos / riesgos anotados
+
+| Sev | Hallazgo | Acción | Estado |
+|-----|----------|--------|--------|
+| 🟠  | Cloud SQL/Memorystore cobran por hora **ociosos** → pueden agotar los $200 | **Budget+Alert** (tope) + tiers mínimos + teardown por Terraform; apagar cuando no se demuestra | Abierto (mitigación en G0/G5) |
+| 🟡  | SNS/SQS/S3 atados al **AWS SDK** → no es swap por config, hay que escribir adaptadores GCP | Acotado por las interfaces (ADR-011); G1/G2 | Abierto (planeado) |
+| 🔵  | La narrativa deja de coincidir *literal* con vacantes "AWS" | Asumido a favor de demostrar despliegue real + portabilidad de proveedor | Aceptado (por diseño) |
+
+### Verificaciones
+
+- [x] Decisión registrada en ADR-013 (SAD v1.0.3) y reflejada en CLAUDE.md / README.
+- [ ] G0…G6: pendientes (ver tabla). **Nada migrado a esta fecha.**
+
+### Conclusión
+
+Decisión tomada y documentada; la implementación arranca por **G1 (Pub/Sub contra el emulador,
+costo $0)** mientras se hace el setup de GCP (proyecto + Budget+Alert) en paralelo. La fase AWS se
+conserva como historia de diseño y como evidencia del swap de proveedor.
+
+**Veredicto:** ✅ Pivote a GCP decidido y planificado (G0…G6). ⬜ Sin implementar aún.
+
+---
+
+## AUD-019 — Fase 3 (seguridad): auth de lecturas con OIDC/JWT + RBAC (2026-06-23)
+
+**Fase:** Fase 3 — Endurecimiento (SAD §10), seguridad. Cierra el item de **mayor peso** del backlog
+de [AUD-015](#aud-015--revisión-crítica-tras-fase-2--productivización-brechas-y-mejores-ideas-2026-06-22) (fila 🟠 "Lecturas sin autenticación").
+**Alcance:** Autenticar `/api/devices|alerts|history` y el hub SignalR; autorización por rol.
+**Auditor:** Fabián Rubio + Claude
+
+### Qué se hizo
+
+- **JWT Bearer flag-gated** (`Auth:Mode`, mismo espíritu que `Telemetry:Transport`, ADR-011):
+  `Disabled` (base/tests, sin auth), `Dev` (la API emite y valida tokens **HS256** locales, sin
+  cuenta AWS) y `Oidc` (valida contra un **authority/JWKS** real — Cognito — cuando la cuenta esté
+  lista). El swap Dev→Oidc **no toca los endpoints**: solo cambia cómo se valida la firma.
+- **RBAC operador/admin** (SAD §6.1): política `read` (rol operador o admin) en todas las lecturas
+  REST y en el hub; política `admin` reservada para acciones futuras. Claim de rol `role`.
+- **Hub por query string**: el WebSocket no manda cabecera `Authorization`; `JwtBearerEvents.
+  OnMessageReceived` recoge `?access_token=` solo para rutas `/hubs`. El frontend lo entrega vía
+  `accessTokenFactory`.
+- **Emisor dev** (`/auth/dev-token?role=`): mintea un JWT con rol; el dashboard lo adquiere de forma
+  **silenciosa al arrancar** (auto-token, sin pantalla de login) por `APP_INITIALIZER`, lo adjunta a
+  `/api/*` por un interceptor y al hub por `accessTokenFactory`.
+- **La ingesta no cambia**: `/ingest` sigue gobernada por el token de dispositivo (`X-Ingest-Token`),
+  no por la auth de usuario. `/health/*` quedan libres (orquestadores).
+
+### Hallazgos
+
+| Sev | Hallazgo | Acción | Estado |
+|-----|----------|--------|--------|
+| 🟠  | Lecturas (`/api/*` + hub) abiertas: cualquiera leía la telemetría de la flota | JWT Bearer + RBAC operador/admin (read policy) | Resuelto |
+| 🟡  | El WebSocket no puede mandar `Authorization` | Token por `?access_token=` (`OnMessageReceived`) + `accessTokenFactory` | Resuelto |
+| 🟡  | Modo `Dev` usa clave simétrica en `appsettings.Development` (en claro) | Aceptable en dev; en prod = `Oidc` (JWKS) + secretos en SSM/Secrets Manager (AUD-015) | Abierto (por diseño) |
+| 🔵  | Sin pantalla de login (auto-token) ni refresh-token real | Suficiente para demostrar la cadena E2E; login/OIDC real queda como incremental | Abierto (por diseño) |
+
+### Verificaciones
+
+- [x] `dotnet build Atalaya.sln` ✅ · `nx run-many -t lint test build --projects=atalaya-web` ✅
+- [x] `nx test api-tests`: **39/39** (32 previos + **7 nuevos de auth**), 0 saltados con Docker.
+- [x] **E2E contra la API en vivo** (InMemory + `Auth:Dev`): `/api/devices` sin token → **401**;
+      `/auth/dev-token` → JWT (257 chars); con token operador → **200**; rol inválido en el emisor →
+      **400**; `/api/history` sin `deviceId` (autenticado) → **400**; hub `negotiate` sin token →
+      **401**; `/ingest` con `X-Ingest-Token` → **202** (la ingesta no se tocó).
+- [x] Tests de auth cubren además el **403** (token válido con rol fuera de la policy, forjado con
+      `DevTokenIssuer`) y la **conexión al hub con token por query string**.
+
+### Conclusión
+
+Las lecturas dejan de ser abiertas: exigen un usuario autenticado con rol. La pieza queda
+**OIDC-ready** (swap a Cognito por config, sin reescribir) respetando ADR-011. Quedan de Fase 3 los
+items menores de seguridad (login real/refresh, secretos gestionados) y el resto del backlog (DLQ
+replay, downsampling, virtual scroll/mapa real); y los solo-AWS-real.
+
+**Veredicto:** ✅ Auth de lecturas cerrada (el item de mayor peso de AUD-015).
+
+---
+
 ## AUD-018 — Fase 3 (endurecimiento operativo): readiness + graceful shutdown + Testcontainers (2026-06-23)
 
 **Fase:** Fase 3 — Endurecimiento (SAD §10), núcleo operativo. Cierra parte de [AUD-015](#aud-015--revisión-crítica-tras-fase-2--productivización-brechas-y-mejores-ideas-2026-06-22) C/D.

@@ -11,8 +11,14 @@
 Plataforma de **monitoreo y alertamiento de flota/IoT en tiempo real**. Ingiere telemetría
 de miles de dispositivos, mantiene proyecciones en vivo y dispara alertas en sub-segundos.
 Es **full-stack con foco frontend** (Angular): el backend existe para que el frontend en
-tiempo real tenga carga real que estresar. Proyecto de portafolio orientado a una vacante
-de Angular/.NET/AWS event-driven.
+tiempo real tenga carga real que estresar. Proyecto de portafolio orientado a **Angular/.NET/
+GCP event-driven con despliegue real**.
+
+> **⚠️ Pivote de nube (2026-06-23, [ADR-013](./SAD-Atalaya.md) / [AUD-020](./AUDIT.md)):** el target
+> cloud pasó de **AWS → GCP**. La fase previa (Fases 0→3) está implementada contra **AWS/LocalStack**
+> y se conserva; lo que viene se despliega en **GCP** (Pub/Sub, Cloud Storage, BigQuery, Identity
+> Platform, Cloud Run, Cloud SQL, Memorystore) con emuladores locales para no gastar. **Nada está
+> migrado aún**; el roadmap es G0…G6 (ver §7). Las menciones a AWS abajo son el estado actual real.
 
 **Documento rector:** [SAD-Atalaya.md](./SAD-Atalaya.md) — léelo; cada decisión es un ADR
 con contexto y trade-offs. Si una decisión nueva surge, se añade como ADR al SAD.
@@ -39,10 +45,10 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
 
 | Archivo | Para qué |
 |---|---|
-| [SAD-Atalaya.md](./SAD-Atalaya.md) | Arquitectura rectora (ADR-001…011, NFRs, roadmap) |
+| [SAD-Atalaya.md](./SAD-Atalaya.md) | Arquitectura rectora (ADR-001…013, NFRs, roadmap). ADR-013 = pivote a GCP |
 | [README.md](./README.md) | Visión, stack, estructura, cómo empezar |
 | [AUDIT.md](./AUDIT.md) | Bitácora de auditorías por fase/cambio |
-| [DEPLOY.md](./DEPLOY.md) | Despliegue local (LocalStack) y AWS (CDK) |
+| [DEPLOY.md](./DEPLOY.md) | Despliegue local (LocalStack hoy; emuladores GCP en el pivote) y nube (CDK→Terraform) |
 | [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) | Errores encontrados y soluciones |
 | **CLAUDE.md** | Este archivo: contexto entre sesiones |
 
@@ -53,7 +59,10 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
 [AUD-011](./AUDIT.md) + camino frío [AUD-012](./AUDIT.md)) + **productivización** (CDK
 [AUD-013](./AUDIT.md) + viewport [AUD-014](./AUDIT.md)) + **Fase 2.5 calidad de datos**
 ([AUD-016](./AUDIT.md) + [AUD-017](./AUDIT.md)) + **Fase 3 endurecimiento operativo**
-([AUD-018](./AUDIT.md)). **El producto está completo**; lo que resta es incremental o solo-AWS.
+([AUD-018](./AUDIT.md)) + **Fase 3 seguridad: auth de lecturas OIDC/JWT** ([AUD-019](./AUDIT.md)).
+**El producto (en AWS/LocalStack) está completo.** **Pivote a GCP en marcha** ([AUD-020](./AUDIT.md),
+roadmap G0…G6): **G1 (mensajería Pub/Sub) hecho y verificado E2E** contra el emulador
+([AUD-021](./AUDIT.md)). Lo siguiente: G2 (GCS + Cloud SQL).
 
 ### Hecho
 - ✅ SAD v1.0.1 (ADR-001…011) + docs base. Repo en GitHub (12+ commits).
@@ -87,6 +96,11 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
 - ✅ **Fase 3 endurecimiento operativo** ([AUD-018](./AUDIT.md)): **readiness** gateada (`/health/ready`
   API+worker, checks Postgres/Redis/SNS/SQS) + **graceful shutdown** (drena el buffer de ingesta) +
   **Testcontainers** (tests del SQL real, skippables sin Docker). Verificado E2E (ready→503 con Redis caído).
+- ✅ **Fase 3 seguridad — auth de lecturas** ([AUD-019](./AUDIT.md)): **JWT Bearer** flag-gated
+  (`Auth:Mode` Disabled/Dev/Oidc, OIDC-ready hacia Cognito) + **RBAC operador/admin** (read policy) en
+  `/api/devices|alerts|history` y el hub (token por `?access_token=`). Emisor dev `/auth/dev-token` +
+  dashboard con **auto-token silencioso** (interceptor `/api/*` + `accessTokenFactory`). La ingesta no
+  cambia (token de dispositivo). 39/39 tests + E2E en vivo (401/200/400/403).
 
 ### ✅ Hallazgo de carga de AUD-009 — RESUELTO ([AUD-010](./AUDIT.md))
 El cuello era el **`PublishAsync` síncrono a SNS por request** (p95 de `/ingest` = 34 s bajo
@@ -123,6 +137,25 @@ cero pérdida (59.200/59.200). Deuda menor: reintento/persistencia ante `Publish
 - **Fase 3 operativo (AUD-018)**: API `/health/live` + `/health/ready` (deps); worker health en
   `:3100` (config `Health:Port`). `SnsBatchPublisher` drena el buffer al apagar. Tests Postgres reales
   con Testcontainers (se **saltan** si no hay Docker). Retención: config `Retention:Days`/`IntervalHours`.
+- **Auth de lecturas (AUD-019)**: flag `Auth:Mode` (`Disabled` base/tests · `Dev` HS256 local ·
+  `Oidc` JWKS/Cognito). `AuthExtensions.AddAtalayaAuth` registra JWT Bearer + policies `read`
+  (rol operador/admin) y `admin`; claim de rol `role`. Lecturas REST + hub usan `.RequireAuthorization
+  ("read")` solo si `Auth:Enabled`; hub recibe el token por `?access_token=` (`OnMessageReceived`).
+  `/auth/dev-token?role=` (solo modo Dev) mintea el JWT (`DevTokenIssuer`). Dev key en
+  `appsettings.Development` (`Auth:DevSigningKey`). `/ingest` y `/health/*` NO se autentican.
+  Frontend: `core/auth/AuthService` (auto-token al arrancar vía `provideAppInitializer`) +
+  `authInterceptor` (Bearer en `/api/*`) + `accessTokenFactory` en el hub. Tests fuerzan `Auth:Mode=Disabled`.
+- **Pub/Sub G1 (AUD-021, ADR-013)**: flag `Telemetry:Transport=Gcp` (junto a `Aws`/`InMemory`).
+  API `GcpPubSubBatchPublisher` (espeja a SNS: canal→lotes; mensaje = array JSON de N eventos) +
+  health `PubSubHealthCheck`. Worker `GcpPubSubConsumer` (SubscriberClient) → `TelemetryBatchProcessor`
+  (lote común a SQS y Pub/Sub). Readiness `IWorkerReadiness` (`SqsReadiness`/`PubSubReadiness`).
+  Config sección `Gcp` (`ProjectId`/`TopicId`/`SubscriptionId`/`EmulatorHost`). El cliente apunta al
+  emulador por `PUBSUB_EMULATOR_HOST` (de `Gcp:EmulatorHost`); auto-crea topic+suscripción contra el
+  emulador (idempotente, con reintento si aún levanta), en prod lo hará Terraform (G5). En modo Gcp el
+  data lake crudo = `NullRawEventArchive` (GCS es G2).
+  **Resiliencia (paridad SQS):** suscripción con `DeadLetterPolicy` (DLQ `atalaya-telemetry-dlq`, 5
+  intentos); handler distingue **veneno** (no deserializa → `Ack`+log+métrica `atalaya.events.poison`)
+  de **transitorio** (→`Nack`, reintenta→DLQ). En GCP real la DLQ exige IAM al SA de Pub/Sub (Terraform, G5).
 - Interfaces de extensión (para swaps sin reescribir): `ITelemetryPublisher`, `IDeviceStateRepository`,
   `IAlertIncidentStore`, `ITelemetryArchive`, `IRawEventArchive`, `IEventDeduplicator`,
   `ITelemetryBroadcaster`, `IAlertBroadcaster`.
@@ -137,16 +170,24 @@ npm start               # dashboard :4200
 npx nx build simulator
 node dist/apps/simulator/main.js --rate 2000 --devices 100 --duration 30 --url http://localhost:3000/ingest --token dev-ingest-token
 ```
-Verificación: `npx nx run-many -t build lint test` · `nx test api-tests` (**32/32** con Docker;
-**29 + 3 saltados** sin Docker, por los tests de Testcontainers). Health: `curl :3000/health/ready`
+**Modo GCP (Pub/Sub, AUD-021)** — emulador en vez de LocalStack, costo $0:
+```
+docker compose -f infra/docker-compose.yml up -d redis postgres pubsub-emulator   # perfil gcp
+$env:Telemetry__Transport="Gcp"; npx nx serve api      # publica al emulador Pub/Sub
+$env:Telemetry__Transport="Gcp"; npx nx serve worker   # consume del emulador
+```
+Verificación: `npx nx run-many -t build lint test` · `nx test api-tests` (**42/42** con Docker;
+**39 + 3 saltados** sin Docker, por los tests de Testcontainers). Health: `curl :3000/health/ready`
 y `:3100/health/ready` (worker). Carga: ver [DEPLOY.md §1.6](./DEPLOY.md) (k6 vía Docker).
+Auth (modo Dev en Development): `curl :3000/auth/dev-token?role=operador` → JWT; el dashboard lo
+adquiere solo. Lecturas sin token → 401; con rol operador/admin → 200.
 
 ### Pendiente (próxima sesión)
 **No quedan fases de features** — el producto (mapa, dispositivos, alertas-incidentes, históricos)
 está completo y verificado E2E. Lo que resta es **endurecimiento incremental** y **solo-AWS-real**:
 
-- **Fase 3 — resto** (SAD §10, local, sin urgencia): **auth de lecturas (OIDC/JWT)** ← el de más peso ·
-  DLQ **replay** · downsampling del histórico · virtual scroll + mapa real (deck.gl) · runbooks.
+- **Fase 3 — resto** (SAD §10, local, sin urgencia): DLQ **replay** · downsampling del histórico ·
+  virtual scroll + mapa real (deck.gl) · runbooks · login real/refresh-token (auth: hoy auto-token dev).
 - **Solo AWS real** (requiere cuenta, hoy bloqueado): **Athena** sobre el data lake S3 · medir
   throughput contra AWS · CDK multi-entorno (dev/staging/prod).
 - **Deuda menor anotada**: durabilidad del borde de ingesta = best-effort (drena al apagar, pero
@@ -170,9 +211,9 @@ atalaya/
 ├─ apps/
 │  ├─ atalaya-web/   # SPA Angular (shell + features lazy)
 │  ├─ simulator/     # generador de carga de telemetría (Node)
-│  ├─ api/           # .NET Minimal API + SignalR + ingesta(SNS) + forwarders Redis→SignalR + health
+│  ├─ api/           # .NET Minimal API + SignalR + ingesta(SNS) + forwarders Redis→SignalR + health + auth(JWT/RBAC)
 │  ├─ worker/        # .NET Worker: SQS → dedup → read models + incidentes + camino frío + retención + health; OTel
-│  └─ api.tests/     # xUnit: InMemory (caliente/incidentes/histórico/viewport) + puros + Testcontainers (Postgres real)
+│  └─ api.tests/     # xUnit: InMemory (caliente/incidentes/histórico/viewport/auth) + puros + Testcontainers (Postgres real)
 ├─ libs/contracts/   # DTOs (TelemetryEvent, DeviceState, AlertIncident, AlertRules, IncidentTransitions)
 ├─ libs/persistence/ # Postgres: device_state + alert_incidents + telemetry particionada + retención + IRawEventArchive
 ├─ libs/realtime/    # Redis: dedup (ADR-006) + broadcasters pub/sub deltas/alertas (ADR-002)
@@ -198,18 +239,31 @@ atalaya/
 - **ADR-010:** Frontend de alto rendimiento: OnPush + Signals + coalescencia (zoneless, hecho).
 - **ADR-011:** Implementación incremental con shims tras interfaces (flag `Telemetry:Transport`);
   puente Redis pub/sub e `awslocal` como interinos del backplane SignalR y CDK.
+- **ADR-012:** Auth de lecturas JWT Bearer flag-gated (`Auth:Mode` Disabled/Dev/Oidc) + RBAC operador/admin.
+- **ADR-013:** **Pivote de nube AWS → GCP** (mismo diseño, otro proveedor; adaptadores GCP tras las
+  interfaces; emuladores locales para no gastar). Mapeo de servicios en el SAD; roadmap en AUD-020.
 
 ## 7. Próximos pasos sugeridos (para la nueva sesión)
 
-**Estado:** Fases 0→3 completas (ver §5). Producto feature-complete y verificado E2E. Último commit
-de contexto: AUD-018 (Fase 3 operativo). Para retomar, leer §5 + la **revisión crítica [AUD-015](./AUDIT.md)**
-(backlog priorizado) y el último audit [AUD-018](./AUDIT.md).
+**Estado:** Fases 0→3 completas en **AWS/LocalStack** (ver §5). **Decisión activa: pivote a GCP**
+([ADR-013](./SAD-Atalaya.md) / [AUD-020](./AUDIT.md)) — decidido y documentado, **sin implementar**.
+Para retomar, leer §1 (banner de pivote) + §5 + [AUD-020](./AUDIT.md) (roadmap G0…G6) + ADR-013.
 
-Candidatos (orden de valor, todos locales salvo donde se indique):
-1. **Auth de lecturas (OIDC/JWT)** en `/api/*` y el hub — el de más peso del backlog (AUD-015 D).
-2. **DLQ replay** + backoff/circuit-breaker (AUD-015 E) · **downsampling** del histórico (AUD-015 C).
-3. **Frontend**: virtual scroll en tablas + mapa real (deck.gl/Mapbox) (AUD-015 G).
-4. **Solo AWS real** (requiere cuenta): **Athena** sobre el data lake · throughput real · CDK multi-entorno.
+**Roadmap del pivote a GCP (orden de ejecución, cada fase verificable):**
+0. **G0 — Fundaciones**: crear proyecto GCP + **Budget+Alert** (tope, protege los ~$200) · habilitar
+   APIs · service accounts. ✋ Necesita al usuario. Docs ya hechas.
+1. **G1 — Pub/Sub** ✅ **HECHO** ([AUD-021](./AUDIT.md)): `GcpPubSubBatchPublisher` (API) +
+   `GcpPubSubConsumer` (worker) tras el flag `Telemetry:Transport=Gcp`, lote común en
+   `TelemetryBatchProcessor`, readiness `IWorkerReadiness`. Verificado E2E contra el emulador.
+2. **G2 — GCS + camino frío**: `GcsRawEventArchive` (fake-gcs-server local) · Cloud SQL = connection string.
+3. **G3 — Auth Identity Platform**: `Auth:Mode=Oidc` real + login Angular (Firebase Auth) + roles por claims.
+4. **G4 — BigQuery**: data lake GCS → BigQuery (cierra Athena).
+5. **G5 — IaC Terraform + despliegue Cloud Run** (API+worker) + SPA a Firebase Hosting.
+6. **G6 — Medición real** (k6 contra Pub/Sub real) + **script de teardown** (apagar Cloud SQL/Memorystore).
+
+⚠️ **Costo**: Cloud SQL/Memorystore cobran ociosos → Budget+Alert + teardown obligatorios.
+Backlog AWS-era que aplica igual en GCP (de [AUD-015](./AUDIT.md)): DLQ replay, downsampling, virtual
+scroll + mapa real (deck.gl), login real/refresh-token.
 
 > Al cerrar cada sesión: actualiza §5 (estado), añade entrada en AUDIT.md si hubo cambio
 > auditable, y registra en TROUBLESHOOTING.md cualquier error resuelto.

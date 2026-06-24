@@ -20,6 +20,7 @@ public sealed class AlertsTests : IClassFixture<WebApplicationFactory<Program>>
             {
                 b.UseSetting("Telemetry:Transport", "InMemory");
                 b.UseSetting("Ingest:Token", "");
+                b.UseSetting("Auth:Mode", "Disabled"); // cubre incidentes, no la auth
             })
             .CreateClient();
     }

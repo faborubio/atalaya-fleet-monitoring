@@ -10,7 +10,9 @@
 | Audiencia | Equipo de ingeniería, Product, evaluadores técnicos |
 | Última revisión | 2026-06-18 |
 
-> **Nota de lectura.** Este SAD describe *por qué* el sistema está construido así, no solo *qué* contiene. Las decisiones se registran como ADRs con su contexto y trade-offs. **Atalaya** es la torre de vigía: ingiere telemetría de miles de dispositivos, mantiene proyecciones en vivo y dispara alertas en sub-segundos. El nombre es la metáfora rectora; los servicios cloud nombrados (AWS) son el target principal de la vacante, pero la arquitectura de capas permite sustituirlos. La app es deliberadamente *full-stack con foco frontend*: el backend existe para que el frontend en tiempo real tenga algo real que estresar.
+> **Nota de lectura.** Este SAD describe *por qué* el sistema está construido así, no solo *qué* contiene. Las decisiones se registran como ADRs con su contexto y trade-offs. **Atalaya** es la torre de vigía: ingiere telemetría de miles de dispositivos, mantiene proyecciones en vivo y dispara alertas en sub-segundos. El nombre es la metáfora rectora; la arquitectura de capas (cada dependencia tras una interfaz, ADR-011) permite sustituir el proveedor cloud. La app es deliberadamente *full-stack con foco frontend*: el backend existe para que el frontend en tiempo real tenga algo real que estresar.
+>
+> **⚠️ Pivote de nube (2026-06-23, [ADR-013](#adr-013--pivote-de-nube-aws--gcp-mismo-diseño-otro-proveedor)).** El target cloud pasó de **AWS** a **Google Cloud (GCP)**: la narrativa del portafolio y el despliegue real serán en GCP (Pub/Sub, Cloud Storage, BigQuery, Identity Platform, Cloud Run, Cloud SQL, Memorystore), con emuladores locales para desarrollar sin coste. Los ADR-001…012 conservan su valor de diseño (event-driven, CQRS, idempotencia, SignalR, auth flag-gated); ADR-013 reemplaza únicamente la **elección de proveedor** y su mapeo de servicios. Las menciones a AWS/SNS/SQS/S3/Athena/Cognito/CDK más abajo son el estado *previo* (hoy implementado contra LocalStack) y se leen junto a la tabla de equivalencias del ADR-013.
 
 ---
 
@@ -53,13 +55,13 @@ Prioridades ordenadas. Cuando dos chocan, gana el de más arriba.
 ## 3. Restricciones y supuestos
 
 **Restricciones**
-- Stack objetivo de la vacante: **Angular** (frontend, foco), **TypeScript**, **RxJS**, **gestión de estado (NgRx)**, **.NET** en backend, **SQL relacional**, **cloud (AWS)** con arquitectura orientada a eventos.
+- Stack objetivo: **Angular** (frontend, foco), **TypeScript**, **RxJS**, **gestión de estado (NgRx)**, **.NET** en backend, **SQL relacional**, **cloud orientada a eventos**. La nube es **GCP** desde el pivote ([ADR-013](#adr-013--pivote-de-nube-aws--gcp-mismo-diseño-otro-proveedor)); la fase previa se construyó contra AWS/LocalStack.
 - El frontend es el foco de evaluación: la profundidad va en Angular/RxJS/estado; el backend es sólido pero acotado.
 
 **Supuestos**
 - Fuente de datos vía simulador HTTP/MQTT-like; payloads JSON de telemetría (id, timestamp, posición, métricas).
-- AWS como nube; el pipeline se reproduce localmente con **LocalStack** para desarrollo.
-- Auth basada en JWT/OIDC para usuarios; las "credenciales de dispositivo" se modelan con tokens de ingesta.
+- **GCP** como nube ([ADR-013](#adr-013--pivote-de-nube-aws--gcp-mismo-diseño-otro-proveedor)); el pipeline se reproduce localmente con **emuladores** (Pub/Sub emulator, fake-gcs-server) para desarrollar sin coste. La fase AWS usaba **LocalStack**.
+- Auth basada en JWT/OIDC para usuarios (en GCP: **Identity Platform**); las "credenciales de dispositivo" se modelan con tokens de ingesta.
 
 ---
 
@@ -177,6 +179,35 @@ La ingesta **nunca escribe directo a la base**. Publica a **SNS** (fan-out), que
 **Decisión:** cada dependencia de infraestructura se define tras una **interfaz** (`ITelemetryPublisher`, `IDeviceStateRepository`, `IEventDeduplicator`, `ITelemetryBroadcaster`) con dos implementaciones: una *in-memory* (modo `InMemory`, sin Docker, para tests y arranque rápido) y una real (modo `Aws`: SNS/SQS, Postgres, Redis). Un flag `Telemetry:Transport` selecciona el modo. Dos atajos de dev conscientes respecto al objetivo del SAD: (a) el push en vivo usa un **puente Redis pub/sub** (worker→Redis→API→SignalR) en lugar del **backplane nativo de SignalR** (`AddStackExchangeRedis`); (b) los recursos AWS se crean con **`awslocal`** en LocalStack en lugar de **AWS CDK** (ADR-009).
 **Razón:** entregar valor verificable por incrementos sin acoplar el dominio a un proveedor; el test de integración corre sin Docker; el cambio a la infra real no reescribe la lógica.
 **Trade-off:** dos implementaciones que mantener y dos atajos a productivizar (backplane nativo + CDK). Aceptado y registrado como deuda explícita en [AUDIT.md](./AUDIT.md) (AUD-006).
+
+---
+
+### ADR-012 — Auth de lecturas: JWT Bearer flag-gated (Dev HS256 / Oidc JWKS) + RBAC operador/admin
+**Contexto:** las lecturas (`/api/devices|alerts|history` y el hub SignalR) estaban abiertas (solo CORS a localhost): cualquiera podía leer la telemetría de la flota (riesgo 🟠 de [AUD-015](./AUDIT.md)). El objetivo es OIDC/JWT por usuario (§8), pero una cuenta AWS/Cognito real está hoy bloqueada y el sistema debe seguir corriendo en local en cada etapa (mismo principio que ADR-011).
+**Decisión:** autenticación **JWT Bearer** seleccionada por un flag `Auth:Mode` con tres modos: `Disabled` (base/tests, sin auth, como el token de ingesta vacío), `Dev` (la API **emite y valida** tokens **HS256** con una clave simétrica local vía `/auth/dev-token`, sin depender de un IdP) y `Oidc` (valida la firma contra el **JWKS** de un `Authority` real — Cognito — cuando la cuenta esté lista). El swap Dev→Oidc es solo configuración: **no toca el código de los endpoints**. Autorización **RBAC** por claim de rol `role`: política `read` (operador o admin) en todas las lecturas REST y en el hub; política `admin` reservada para acciones futuras. El WebSocket recibe el token por `?access_token=` (`JwtBearerEvents.OnMessageReceived`), que es lo que entrega el `accessTokenFactory` del cliente. La **ingesta no cambia**: `/ingest` sigue gobernada por el token de dispositivo (`X-Ingest-Token`), no por la auth de usuario; `/health/*` quedan libres.
+**Razón:** cierra la brecha de lecturas abiertas (el item de mayor peso del backlog) demostrando la cadena de auth de extremo a extremo sin acoplarse a un proveedor ni exigir nube; el frontend (interceptor + `accessTokenFactory` + auto-token al arrancar) queda intacto al pasar a OIDC real.
+**Trade-off:** el modo Dev guarda una clave simétrica en `appsettings.Development` (en claro, aceptable solo en dev) y usa auto-token sin login real ni refresh-token; en prod = modo `Oidc` (JWKS rotable) + secretos en SSM/Secrets Manager. Registrado en [AUDIT.md](./AUDIT.md) (AUD-019).
+
+---
+
+### ADR-013 — Pivote de nube AWS → GCP: mismo diseño, otro proveedor
+**Contexto:** la fase de portafolio se construyó sobre AWS (SNS/SQS/S3/Athena/Cognito/CDK), reproducida en local con LocalStack. Para **desplegar de verdad** (no solo emulado) se dispone de una cuenta **Google Cloud** con presupuesto (~US$200). Desplegar en una nube real pesa más en el portafolio que "probado contra LocalStack", y GCP cubre cada pieza con servicios gestionados. La arquitectura ya está desacoplada del proveedor (ADR-011: cada dependencia tras una interfaz), así que el cambio no toca el dominio.
+**Decisión:** **pivotar el target cloud a GCP**. La narrativa pasa a *"Angular/.NET/GCP event-driven con despliegue real"*. Se mantiene intacta la filosofía de ADR-011: las implementaciones GCP entran **tras las interfaces existentes** (`ITelemetryPublisher`, `IRawEventArchive`, …), seleccionadas por el flag de transporte (nuevo valor `Gcp` junto a `Aws`/`InMemory`), y el desarrollo usa **emuladores locales** para no gastar (Pub/Sub emulator, `fake-gcs-server`), reservando la nube real para validar/demostrar. Mapeo de servicios:
+
+| Pieza (AWS, fase previa) | GCP (target) | Emulador local |
+|---|---|---|
+| SNS → SQS (ingesta, ADR-001) | **Pub/Sub** (topic + subscriptions) | Pub/Sub emulator |
+| S3 data lake (camino frío, ADR-007) | **Cloud Storage (GCS)** | `fake-gcs-server` |
+| Athena (analítica sobre el lake) | **BigQuery** (tabla externa/carga) | — (consultas en la nube) |
+| Cognito / OIDC (ADR-012) | **Identity Platform** (JWKS) | emisor dev HS256 (ya existe) |
+| CDK (IaC, ADR-009) | **Terraform / OpenTofu** | `terraform plan` local |
+| EC2/ECS (cómputo) | **Cloud Run** (API + worker en contenedor) | `dotnet run` / Docker local |
+| (Redis) | **Memorystore** | Redis en Docker |
+| (Postgres) | **Cloud SQL for PostgreSQL** | Postgres en Docker |
+| Hosting SPA | **Firebase Hosting** | `nx serve` local |
+
+**Razón:** entregar el sistema **desplegado en una nube real** sin reescribir el dominio, demostrando que el desacoplamiento por interfaces (ADR-011) funciona de verdad ante un cambio de proveedor. GCP además aporta BigQuery (cierra Athena gratis a baja escala) e Identity Platform (cierra el OIDC real, swap por config del modo `Oidc`).
+**Trade-off:** (a) la narrativa deja de coincidir *literal* con vacantes "AWS" — se asume a favor de demostrar despliegue real y portabilidad; (b) no es swap por config: SNS/SQS/S3 estaban atados al **AWS SDK**, así que hay que **escribir adaptadores GCP** (Pub/Sub publisher + consumidor, archivo GCS) — trabajo real, aunque acotado por las interfaces; (c) **costo**: Pub/Sub/Cloud Run/BigQuery escalan a cero, pero Cloud SQL/Memorystore cobran por hora ociosos → se exige **Budget+Alert** y teardown por Terraform. Roadmap de ejecución por fases G0…G6 en [AUDIT.md](./AUDIT.md) (AUD-020). La fase AWS no se borra: queda como historia de diseño y como prueba del swap de proveedor.
 
 ---
 
@@ -314,6 +345,8 @@ Cada fase entrega algo demostrable y medido. La prueba de carga y la latencia ev
 |---|---|---|
 | 1.0.0 | 2026-06-18 | Baseline. Arquitectura event-driven (SNS/SQS), camino caliente/frío con read models (CQRS pragmático), SignalR + backplane, NgRx para estado de app con el firehose fuera del Store, RxJS disciplinado, OnPush+Signals+coalescencia, almacenamiento particionado + S3 data lake, IaC con CDK + LocalStack, resiliencia (dedup/DLQ/replay), observabilidad OTel, NFRs medidos, riesgos y roadmap. ADR-001…010. |
 | 1.0.1 | 2026-06-22 | ADR-011: implementación incremental con shims de dev tras interfaces (flag `Telemetry:Transport`), puente Redis pub/sub como interino del backplane SignalR y `awslocal` como interino de CDK. Refleja Fase 0–1 implementadas (ver AUDIT AUD-001…006). |
+| 1.0.2 | 2026-06-23 | ADR-012: auth de lecturas con JWT Bearer flag-gated (`Auth:Mode` Dev HS256 / Oidc JWKS, OIDC-ready hacia Cognito) + RBAC operador/admin en `/api/*` y el hub (token por `?access_token=`). Cierra la brecha de lecturas abiertas de AUD-015 (ver AUDIT AUD-019). |
+| 1.0.3 | 2026-06-23 | ADR-013: **pivote de nube AWS → GCP** (Pub/Sub, Cloud Storage, BigQuery, Identity Platform, Cloud Run, Cloud SQL, Memorystore; emuladores locales). Mismo diseño (ADR-011), otro proveedor; adaptadores GCP tras las interfaces. Roadmap G0…G6 en AUDIT AUD-020. Decisión registrada; implementación pendiente. |
 
 ---
 

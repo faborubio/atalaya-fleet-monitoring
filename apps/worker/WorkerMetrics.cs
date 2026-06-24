@@ -16,6 +16,7 @@ public sealed class WorkerMetrics
     private readonly Counter<long> _duplicates;
     private readonly Counter<long> _alertsRaised;
     private readonly Counter<long> _archived;
+    private readonly Counter<long> _poison;
 
     public WorkerMetrics(IMeterFactory factory)
     {
@@ -27,6 +28,7 @@ public sealed class WorkerMetrics
         _duplicates = meter.CreateCounter<long>("atalaya.events.duplicates");
         _alertsRaised = meter.CreateCounter<long>("atalaya.alerts.raised");
         _archived = meter.CreateCounter<long>("atalaya.telemetry.archived");
+        _poison = meter.CreateCounter<long>("atalaya.events.poison");
     }
 
     public void RecordLatency(double milliseconds) => _pipelineLatency.Record(milliseconds);
@@ -34,4 +36,6 @@ public sealed class WorkerMetrics
     public void AddDuplicates(long count) => _duplicates.Add(count);
     public void AddAlerts(long count) => _alertsRaised.Add(count);
     public void AddArchived(long count) => _archived.Add(count);
+    /// <summary>Mensajes descartados por venenosos (cuerpo que nunca deserializará).</summary>
+    public void AddPoison(long count) => _poison.Add(count);
 }

@@ -1,10 +1,12 @@
 # Infraestructura de desarrollo de Atalaya (ADR-009).
-# Reproduce el pipeline event-driven en local sin AWS real:
-#   - LocalStack: SNS (fan-out) + SQS (buffer + DLQ) + S3 (data lake)
+# Reproduce el pipeline event-driven en local sin nube real:
+#   - LocalStack (AWS): SNS (fan-out) + SQS (buffer + DLQ) + S3 (data lake)
+#   - pubsub-emulator (GCP, ADR-013): broker Pub/Sub (perfil "gcp", no arranca por defecto)
 #   - Redis: set de deduplicación (ADR-006) + backplane de SignalR (ADR-002)
 #   - Postgres: read models + telemetría (ADR-005/007)
 #
-# Uso:  docker compose -f infra/docker-compose.yml up -d
+# Uso (AWS, por defecto):  docker compose -f infra/docker-compose.yml up -d
+# Uso (GCP, ADR-013):      docker compose -f infra/docker-compose.yml up -d redis postgres pubsub-emulator
 #       docker compose -f infra/docker-compose.yml down   (añade -v para borrar datos)
 
 name: atalaya-dev
@@ -24,6 +26,23 @@ services:
       - ./localstack/init:/etc/localstack/init/ready.d:ro
     healthcheck:
       test: ['CMD', 'awslocal', 'sqs', 'list-queues']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Emulador de Google Cloud Pub/Sub (ADR-013). Perfil "gcp": no arranca con el `up` por defecto;
+  # se levanta nombrándolo explícitamente (ver cabecera). El app crea topic/suscripción al arrancar.
+  # Imagen oficial del Cloud SDK (~grande); alternativa ligera: imágenes community de pubsub-emulator.
+  pubsub-emulator:
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+    profiles: ['gcp']
+    command: >
+      gcloud beta emulators pubsub start
+      --host-port=0.0.0.0:8085 --project=atalaya-local
+    ports:
+      - '8085:8085'
+    healthcheck:
+      test: ['CMD-SHELL', "timeout 1 bash -c '</dev/tcp/localhost/8085' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10

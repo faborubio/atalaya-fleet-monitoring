@@ -1,7 +1,7 @@
 # Atalaya
 
 > **Plataforma de monitoreo y alertamiento de flota/IoT en tiempo real.**
-> Angular + .NET + AWS, arquitectura orientada a eventos.
+> Angular + .NET + **GCP**, arquitectura orientada a eventos, con despliegue real.
 
 Atalaya es la torre de vigía: ingiere telemetría de miles de dispositivos, mantiene
 proyecciones en vivo y dispara alertas en sub-segundos. Es un proyecto **full-stack con
@@ -11,10 +11,17 @@ que estresar.
 | | |
 |---|---|
 | **Versión** | 0.3.0 |
-| **Estado** | 🟢 Fases 0→3 completas — feature-complete y verificado E2E (resto: solo-AWS-real + pulido) |
+| **Estado** | 🟢 Fases 0→3 completas (en AWS/LocalStack) — verificado E2E · 🔵 **pivote a GCP** decidido, en migración ([ADR-013](./SAD-Atalaya.md)) |
 | **Autor** | Fabián Rubio — Full Stack (foco Frontend / Angular) |
 | **Repositorio** | https://github.com/faborubio/atalaya-fleet-monitoring |
 | **Documento rector** | [SAD-Atalaya.md](./SAD-Atalaya.md) |
+
+> **⚠️ Pivote de nube AWS → GCP** ([ADR-013](./SAD-Atalaya.md) / [AUD-020](./AUDIT.md)). El sistema
+> está construido y verificado E2E sobre **AWS/LocalStack** (lo de abajo); la dirección activa es
+> desplegarlo **de verdad en Google Cloud** (Pub/Sub, Cloud Storage, BigQuery, Identity Platform,
+> Cloud Run, Cloud SQL, Memorystore), desarrollando con emuladores locales. Mismo diseño, otro
+> proveedor — los adaptadores GCP entran tras las interfaces ya existentes. **Migración en curso, por
+> fases G0…G6**; nada migrado aún.
 
 > **Lo que funciona (verificado E2E, reproducible en local con Docker):**
 > - **Camino caliente:** `simulador → API → SNS → SQS → worker → dedup(Redis) → Postgres → Redis → SignalR → dashboard en vivo`. Ingesta desacoplada (p95 `/ingest` ~34 ms, ~5.000 ev/s sin pérdida).
@@ -22,7 +29,7 @@ que estresar.
 > - **Camino frío:** telemetría particionada por tiempo (retención por `DROP PARTITION`) + data lake S3 idempotente + vista histórica.
 > - **Productivización:** infra como **AWS CDK** (desplegada a LocalStack), push **por viewport**, **readiness** (`/health/ready`) y graceful shutdown, tests de integración con **Testcontainers**.
 >
-> Detalle por fase en [AUDIT.md](./AUDIT.md) (AUD-001…018).
+> Detalle por fase en [AUDIT.md](./AUDIT.md) (AUD-001…021; AUD-020 = decisión de pivote a GCP, AUD-021 = G1 Pub/Sub).
 
 ---
 
@@ -75,9 +82,11 @@ Las decisiones están registradas como **ADRs** en el [SAD](./SAD-Atalaya.md#5-d
 | Frontend | Angular (standalone), TypeScript, RxJS, NgRx (estado de app) + Component Store (firehose) |
 | Tiempo real | SignalR (WebSocket) + backplane Redis |
 | Backend | .NET (Minimal API + Worker Services) |
-| Mensajería | AWS SNS → SQS (FIFO donde importa el orden) |
-| Almacenamiento | SQL particionado (PostgreSQL/TimescaleDB) + S3 data lake |
-| Infra | AWS CDK + LocalStack (dev) |
+| Mensajería | hoy **AWS SNS → SQS** · target **GCP Pub/Sub** ([ADR-013](./SAD-Atalaya.md)) |
+| Almacenamiento | SQL particionado (PostgreSQL → Cloud SQL) + data lake **S3 → Cloud Storage** |
+| Analítica | (Athena) → **BigQuery** |
+| Auth | JWT Bearer + RBAC · OIDC (Cognito) → **Identity Platform** |
+| Infra | hoy **AWS CDK + LocalStack** · target **Terraform + Cloud Run** (emuladores en dev) |
 | Monorepo | Nx |
 | Observabilidad | OpenTelemetry, métricas RED |
 
@@ -135,6 +144,11 @@ node dist/apps/simulator/main.js --rate 2000 --devices 100 --duration 30 \
 ```
 > En modo Aws `/ingest` exige el header `X-Ingest-Token` (auth de ingesta). El simulador lo
 > envía con `--token`. En modo InMemory no hay token (config base vacía).
+>
+> **Auth de lecturas** (modo Dev en Development, [AUD-019](./AUDIT.md)): `/api/devices|alerts|history`
+> y el hub exigen un **JWT** con rol operador/admin. El dashboard obtiene el token solo
+> (`GET /auth/dev-token`); sin token, las lecturas devuelven `401`. Flag `Auth:Mode`
+> (`Disabled`/`Dev`/`Oidc`): en prod se valida contra Cognito sin tocar el código.
 
 ### Sin Docker (camino rápido)
 
@@ -149,7 +163,7 @@ node dist/apps/simulator/main.js --rate 1000 --devices 50 --duration 10 --url ht
 ```bash
 npx nx run-many -t build       # Angular + simulador + .NET
 npx nx run-many -t lint test   # lint + tests (front)
-npx nx test api-tests          # .NET: 32/32 con Docker (3 de Testcontainers); 29 + 3 saltados sin Docker
+npx nx test api-tests          # .NET: 42/42 con Docker (3 de Testcontainers); 39 + 3 saltados sin Docker
 ```
 Readiness: `curl localhost:3000/health/ready` (API) y `localhost:3100/health/ready` (worker).
 
@@ -169,7 +183,22 @@ Más detalle (modos, endpoints, rollback) en [DEPLOY.md](./DEPLOY.md).
 | **— Productivización** | IaC con **AWS CDK** + grupos por **viewport** en SignalR | ✅ ([AUD-013](./AUDIT.md), [AUD-014](./AUDIT.md)) |
 | **2.5 — Calidad de datos** | Retención `DROP PARTITION` + S3 idempotente + alertas como incidentes con histéresis | ✅ ([AUD-016](./AUDIT.md), [AUD-017](./AUDIT.md)) |
 | **3 — Endurecimiento operativo** | Readiness/health, graceful shutdown, Testcontainers | ✅ ([AUD-018](./AUDIT.md)) |
-| **Resto (incremental / AWS real)** | Auth OIDC lecturas, DLQ replay, downsampling, deck.gl · **Athena** (cuenta AWS) | ⬜ Backlog ([AUD-015](./AUDIT.md)) |
+| **3 — Seguridad: auth de lecturas** | JWT Bearer flag-gated (Dev HS256 / Oidc JWKS) + RBAC operador/admin en `/api/*` y el hub | ✅ ([AUD-019](./AUDIT.md)) |
+
+### Pivote a GCP — despliegue real ([ADR-013](./SAD-Atalaya.md) / [AUD-020](./AUDIT.md))
+
+> Decisión tomada; **nada migrado aún**. Se desarrolla con emuladores locales (costo $0) y se valida en la nube real.
+
+| Fase | Alcance | Estado |
+|---|---|---|
+| **G0 — Fundaciones** | Proyecto GCP + **Budget+Alert** + APIs + service accounts | ⬜ |
+| **G1 — Mensajería Pub/Sub** | `PubSubBatchPublisher` + consumidor (flag `Telemetry:Transport=Gcp`), E2E contra el emulador | ✅ ([AUD-021](./AUDIT.md)) |
+| **G2 — Cloud Storage + camino frío** | `GcsRawEventArchive` (fake-gcs local) + Cloud SQL | ⬜ |
+| **G3 — Auth Identity Platform** | `Auth:Mode=Oidc` real + login Angular (Firebase Auth) + roles por claims | ⬜ |
+| **G4 — BigQuery** | Data lake GCS → BigQuery (cierra Athena) | ⬜ |
+| **G5 — IaC + despliegue** | Terraform + **Cloud Run** (API+worker) + SPA a **Firebase Hosting** | ⬜ |
+| **G6 — Medición + teardown** | k6 contra Pub/Sub real + script de destrucción de recursos | ⬜ |
+| **Backlog (aplica en GCP)** | DLQ replay, downsampling, virtual scroll + mapa real (deck.gl), login real/refresh | ⬜ ([AUD-015](./AUDIT.md)) |
 
 Cada fase entrega algo demostrable y medido. Ver detalle en el
 [SAD §13](./SAD-Atalaya.md#13-roadmap-por-fases) y la revisión crítica [AUD-015](./AUDIT.md).

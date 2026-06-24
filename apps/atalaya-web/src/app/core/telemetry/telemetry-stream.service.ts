@@ -7,6 +7,7 @@ import {
 } from '@microsoft/signalr';
 import { Observable, Subject } from 'rxjs';
 import { API_CONFIG } from '../api.config';
+import { AuthService } from '../auth/auth.service';
 import { DeviceState } from '../models/device-state';
 import { AlertIncident } from '../models/alert';
 
@@ -18,6 +19,7 @@ import { AlertIncident } from '../models/alert';
 @Injectable({ providedIn: 'root' })
 export class TelemetryStreamService {
   private readonly config = inject(API_CONFIG);
+  private readonly auth = inject(AuthService);
   private readonly deltas = new Subject<DeviceState[]>();
   private readonly alerts = new Subject<AlertIncident[]>();
   private readonly connected = new Subject<void>();
@@ -45,7 +47,9 @@ export class TelemetryStreamService {
     if (this.connection) return;
 
     this.connection = new HubConnectionBuilder()
-      .withUrl(this.config.hubUrl)
+      // accessTokenFactory: SignalR lo manda como ?access_token= (el WebSocket no lleva cabecera).
+      // En Auth:Disabled devuelve cadena vacía y el hub no exige token.
+      .withUrl(this.config.hubUrl, { accessTokenFactory: () => this.auth.ensureToken() })
       .withAutomaticReconnect()
       .configureLogging(LogLevel.Warning)
       .build();

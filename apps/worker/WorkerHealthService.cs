@@ -1,17 +1,16 @@
 using System.Net;
-using Amazon.SQS;
 
 namespace Atalaya.Worker;
 
 /// <summary>
 /// Endpoint de salud mínimo del worker (SAD Fase 3, AUD-015 E). Un Worker no expone HTTP por
 /// defecto; aquí se levanta un <see cref="HttpListener"/> ligero con <c>/health/live</c> (proceso
-/// vivo) y <c>/health/ready</c> (gateado por la accesibilidad de SQS) para readiness en
-/// orquestadores. Best-effort: si no puede enlazar el puerto, registra y el worker sigue.
+/// vivo) y <c>/health/ready</c> (gateado por la accesibilidad del broker vía
+/// <see cref="IWorkerReadiness"/>, agnóstico al proveedor) para readiness en orquestadores.
+/// Best-effort: si no puede enlazar el puerto, registra y el worker sigue.
 /// </summary>
 public sealed class WorkerHealthService(
-    IAmazonSQS sqs,
-    AwsOptions options,
+    IWorkerReadiness readiness,
     IConfiguration config,
     ILogger<WorkerHealthService> logger) : BackgroundService
 {
@@ -65,16 +64,6 @@ public sealed class WorkerHealthService(
         finally { ctx.Response.Close(); }
     }
 
-    private async Task<(int, string)> ReadyAsync(CancellationToken ct)
-    {
-        try
-        {
-            await sqs.GetQueueUrlAsync(options.QueueName, ct);
-            return (200, "ready");
-        }
-        catch
-        {
-            return (503, "sqs-unreachable");
-        }
-    }
+    private async Task<(int, string)> ReadyAsync(CancellationToken ct) =>
+        await readiness.IsReadyAsync(ct) ? (200, "ready") : (503, "broker-unreachable");
 }

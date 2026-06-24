@@ -24,6 +24,7 @@ public sealed class HotPathTests : IClassFixture<WebApplicationFactory<Program>>
             {
                 b.UseSetting("Telemetry:Transport", "InMemory");
                 b.UseSetting("Ingest:Token", "");
+                b.UseSetting("Auth:Mode", "Disabled"); // este test cubre el camino caliente, no la auth
             })
             .CreateClient();
     }

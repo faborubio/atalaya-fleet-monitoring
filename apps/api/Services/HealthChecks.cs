@@ -1,5 +1,6 @@
 using Amazon.SimpleNotificationService;
 using Atalaya.Persistence;
+using Google.Cloud.PubSub.V1;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -62,6 +63,24 @@ public sealed class SnsHealthCheck(IAmazonSimpleNotificationService sns) : IHeal
         catch (Exception ex)
         {
             return HealthCheckResult.Unhealthy("SNS inaccesible", ex);
+        }
+    }
+}
+
+/// <summary>Readiness del broker en modo Gcp (ADR-013): el topic de ingesta debe ser alcanzable.</summary>
+public sealed class PubSubHealthCheck(PublisherServiceApiClient publisher, GcpOptions options) : IHealthCheck
+{
+    public async Task<HealthCheckResult> CheckHealthAsync(
+        HealthCheckContext context, CancellationToken ct = default)
+    {
+        try
+        {
+            await publisher.GetTopicAsync(TopicName.FromProjectTopic(options.ProjectId, options.TopicId), ct);
+            return HealthCheckResult.Healthy();
+        }
+        catch (Exception ex)
+        {
+            return HealthCheckResult.Unhealthy("Pub/Sub inaccesible", ex);
         }
     }
 }

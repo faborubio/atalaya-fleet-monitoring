@@ -64,7 +64,9 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
 roadmap G0…G6): **G1 (Pub/Sub)** ([AUD-021](./AUDIT.md)) y **G2 (data lake en Cloud Storage)**
 ([AUD-022](./AUDIT.md)) verificados contra emuladores; **G3 (auth OIDC real con Identity Platform)**
 ([AUD-023](./AUDIT.md)) y **G4 (analítica con BigQuery sobre el data lake)** ([AUD-024](./AUDIT.md))
-verificados contra el proyecto **real `fabian-portafolio`**. Lo siguiente: G5 (Terraform + Cloud Run + Firebase Hosting).
+verificados contra el proyecto **real `fabian-portafolio`**. **G5a (IaC con Terraform + Dockerfiles)**
+([AUD-025](./AUDIT.md)) escrito y validado (`terraform validate` + imágenes que construyen, $0).
+Lo siguiente: **G5b** (apply real + E2E en la nube + teardown).
 
 ### Hecho
 - ✅ SAD v1.0.1 (ADR-001…011) + docs base. Repo en GitHub (12+ commits).
@@ -108,7 +110,13 @@ verificados contra el proyecto **real `fabian-portafolio`**. Lo siguiente: G5 (T
   (`GcsRawEventArchive`, dedup check+commit, **NDJSON**) · **Identity Platform** auth OIDC real (login
   Firebase, RBAC por custom claim) · **BigQuery** external table sobre el lake + endpoint
   `/api/analytics/devices` (cost guard `MaximumBytesBilled`). Verificados E2E contra emuladores (G1/G2)
-  y el proyecto real **fabian-portafolio** (G3 auth, G4 BigQuery). 43/43 tests. **Siguiente: G5 IaC/Cloud Run** (ver §7).
+  y el proyecto real **fabian-portafolio** (G3 auth, G4 BigQuery). 43/43 tests.
+- ✅ **Pivote a GCP — G5a IaC** (ADR-013, [AUD-025](./AUDIT.md)): **Terraform** (`infra/terraform/`) del
+  plano de control GCP completo (Artifact Registry · SAs mínimas · Pub/Sub+DLQ+IAM · GCS · BigQuery ·
+  Cloud SQL · Memorystore+VPC connector · Secret Manager · 2× Cloud Run always-on · Firebase Hosting),
+  reemplaza el AWS CDK. **Dockerfiles** api/worker + container-readiness (worker health en `$PORT`, CORS
+  por `Cors:Origins`). `terraform validate` ✅ + imágenes construyen ($0). **Siguiente: G5b** (apply real
+  + E2E en la nube + teardown; ver §7).
 
 ### ✅ Hallazgo de carga de AUD-009 — RESUELTO ([AUD-010](./AUDIT.md))
 El cuello era el **`PublishAsync` síncrono a SNS por request** (p95 de `/ingest` = 34 s bajo
@@ -195,6 +203,17 @@ cero pérdida (59.200/59.200). Deuda menor: reintento/persistencia ante `Publish
   `yyyy/MM/dd` **no es hive** → sin poda de particiones, cada query escanea todo el lake (pay-per-byte).
   IAM runtime mínimo de la SA de consulta: `bigquery.jobUser` + `bigquery.dataViewer` + `storage.objectViewer`
   (sobre el bucket). El setup (crear dataset/tabla) exige editor (`bigquery.dataEditor`/admin), no solo viewer.
+- **IaC Terraform G5a (AUD-025, ADR-013)**: `infra/terraform/` (reemplaza `infra/cdk/`). Un archivo por
+  dominio (apis/artifact_registry/service_accounts/pubsub/storage/bigquery/sql/redis/network/secrets/
+  cloudrun/firebase/outputs). Provider `google`/`google-beta` ~> 6.0; **backend GCS** parametrizado
+  (`-backend-config="bucket=..."`). Las apps en Cloud Run usan la **identidad del servicio** (ADC, sin
+  keys); SAs `atalaya-api`/`atalaya-worker` de mínimo privilegio. Cloud Run → **Cloud SQL** por socket
+  unix (`/cloudsql/...`, connection string en Secret Manager) y → **Memorystore** por **VPC connector**
+  (`egress=PRIVATE_RANGES_ONLY`). Ambos servicios **always-on** (`min_instances=1`, `cpu_idle=false`);
+  worker `max_instances=1` (caché de incidentes, AUD-017). El Terraform **cierra el gap de IAM de la DLQ**
+  de Pub/Sub (G1). **Cambios de app para contenedor:** worker health en `http://+:$PORT` cuando hay `PORT`
+  (Cloud Run); CORS por `Cors:Origins`. Dockerfiles multi-stage en `apps/{api,worker}/Dockerfile` (contexto
+  = raíz). **Validado `terraform validate` + build de imágenes ($0)**; `apply`/`firebase deploy`/teardown = G5b.
 - Interfaces de extensión (para swaps sin reescribir): `ITelemetryPublisher`, `IDeviceStateRepository`,
   `IAlertIncidentStore`, `ITelemetryArchive`, `IRawEventArchive`, `IEventDeduplicator`,
   `ITelemetryBroadcaster`, `IAlertBroadcaster`, `IAnalyticsQuery`.
@@ -259,7 +278,7 @@ atalaya/
 ├─ libs/contracts/   # DTOs (TelemetryEvent, DeviceState, AlertIncident, AlertRules, IncidentTransitions)
 ├─ libs/persistence/ # Postgres: device_state + alert_incidents + telemetry particionada + retención + IRawEventArchive
 ├─ libs/realtime/    # Redis: dedup (ADR-006) + broadcasters pub/sub deltas/alertas (ADR-002)
-├─ infra/            # docker-compose (LocalStack+Redis+Postgres + pubsub-emulator/fake-gcs perfil gcp) + cdk/ + load/ingest.js (k6)
+├─ infra/            # docker-compose (LocalStack+Redis+Postgres + pubsub-emulator/fake-gcs perfil gcp) + cdk/ (AWS) + terraform/ (GCP, G5) + load/ingest.js (k6)
 ├─ Atalaya.sln, nuget.config
 ├─ *.md              # SAD, README, AUDIT, DEPLOY, TROUBLESHOOTING, CLAUDE
 └─ nx.json, package.json, tsconfig.base.json, eslint.config.mjs
@@ -287,10 +306,11 @@ atalaya/
 
 ## 7. Próximos pasos sugeridos (para la nueva sesión)
 
-**Estado:** Fases 0→3 completas en AWS/LocalStack + **pivote a GCP G1/G2/G3/G4 hechos y verificados E2E**
-([AUD-021](./AUDIT.md)…[AUD-024](./AUDIT.md)). Último commit (previo a G4): **G3** (`e8d48d9`,
-auth OIDC real). **Siguiente: G5 (Terraform + Cloud Run + Firebase Hosting).** Para retomar, leer §1
-(banner de pivote) + §5 + [AUD-020](./AUDIT.md) (roadmap) + el último audit [AUD-024](./AUDIT.md).
+**Estado:** Fases 0→3 completas en AWS/LocalStack + **pivote a GCP G1/G2/G3/G4 verificados E2E** +
+**G5a (IaC Terraform) escrito y validado** ([AUD-021](./AUDIT.md)…[AUD-025](./AUDIT.md)). Último commit:
+**G4** (`e0d2d7e`, BigQuery). **Siguiente: G5b (apply real + E2E en la nube + teardown).** Para retomar,
+leer §1 (banner de pivote) + §5 + [AUD-020](./AUDIT.md) (roadmap) + los últimos audits
+[AUD-024](./AUDIT.md)/[AUD-025](./AUDIT.md) + `infra/terraform/README.md` (runbook de G5b).
 
 > **Flujo por fase G (acordado, [memoria] `gcp-phase-workflow`):** implementar → **verificar E2E real**
 > (no solo build/tests) → **revisión crítica** → aplicar el fix que surja → documentar en los .md →
@@ -328,6 +348,14 @@ Identity Platform; dashboard en modo firebase = `useFirebaseAuth=true` en `app.c
    IAM runtime mínimo de la SA `bq-query-service`: `bigquery.jobUser` + `bigquery.dataViewer` +
    `storage.objectViewer`. **No hay emulador de BigQuery** → se validó contra el proyecto real.
 5. **G5 — IaC Terraform + despliegue Cloud Run** (API+worker) + SPA a Firebase Hosting.
+   - **G5a** ✅ **HECHO** ([AUD-025](./AUDIT.md)): Terraform completo en `infra/terraform/` (reemplaza el
+     CDK) + Dockerfiles api/worker + container-readiness (worker health en `$PORT`, CORS por `Cors:Origins`).
+     `terraform validate` ✅ + imágenes que construyen ($0). Worker = **pull + min-instances=1** (decisión).
+     Cierra el gap de IAM de la DLQ de Pub/Sub (G1).
+   - **G5b** (SIGUIENTE): `terraform apply` real (crear bucket de tfstate → init con backend → publicar
+     imágenes en Artifact Registry → apply) + **`firebase deploy`** de la SPA + **smoke E2E en la nube**
+     + **teardown**. Runbook en `infra/terraform/README.md`. ⚠️ Cobra (~US$70–120/mes encendido):
+     ventana acotada + Budget+Alert + `terraform destroy` al terminar.
 6. **G6 — Medición real** (k6 contra Pub/Sub real) + **script de teardown** (apagar Cloud SQL/Memorystore).
 
 ⚠️ **Costo**: BigQuery pay-per-byte (free-tier cubre dev); Cloud SQL/Memorystore cobran ociosos →

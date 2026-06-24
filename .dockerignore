@@ -1,0 +1,17 @@
+# Mantiene el contexto de build pequeño y reproducible (G5). Excluye artefactos y dependencias
+# que el build multi-stage reconstruye dentro de la imagen.
+**/bin/
+**/obj/
+**/node_modules/
+dist/
+.git/
+.nx/
+infra/
+**/.vs/
+**/.vscode/
+**/*.user
+**/TestResults/
+# Nunca enviar secretos al contexto de build.
+**/*.pem
+**/serviceAccountKey*.json
+**/sa*.json

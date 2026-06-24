@@ -16,8 +16,13 @@ public sealed class WorkerHealthService(
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var port = config.GetValue("Health:Port", 3100);
-        var prefix = $"http://localhost:{port}/";
+        // Cloud Run (G5) inyecta PORT y exige escuchar en todas las interfaces (0.0.0.0:$PORT) para su
+        // sonda de arranque. En local se conserva `localhost:Health:Port` (bindear a `+` en Windows
+        // exigiría URL ACL/admin, rompería `nx serve`). En el contenedor Linux `+` no necesita ACL.
+        var cloudRunPort = Environment.GetEnvironmentVariable("PORT");
+        var prefix = !string.IsNullOrEmpty(cloudRunPort)
+            ? $"http://+:{cloudRunPort}/"
+            : $"http://localhost:{config.GetValue("Health:Port", 3100)}/";
 
         using var listener = new HttpListener();
         listener.Prefixes.Add(prefix);

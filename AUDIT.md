@@ -36,6 +36,65 @@ proyecto.
 
 ---
 
+## AUD-025 — Pivote a GCP · G5a: IaC con Terraform + contenedores (Cloud Run) (2026-06-24)
+
+**Fase:** Pivote a GCP ([ADR-013](./SAD-Atalaya.md)), **fase G5** (parte **G5a**) del roadmap de [AUD-020](#aud-020--decisión-pivote-de-nube-aws--gcp-2026-06-23). Reemplaza el AWS CDK como IaC.
+**Alcance:** **Autoría del Terraform completo** del plano de control GCP + **Dockerfiles** de api/worker + container-readiness de las apps. Verificación local **$0** (`terraform validate` + build de imágenes). El **`apply` real, verificación E2E en la nube y teardown** se difieren a **G5b** (cobran) — decisión acordada con el usuario por costo.
+**Auditor:** Fabián Rubio + Claude
+
+### Qué se hizo
+
+- **Terraform** (`infra/terraform/`, provider `google`/`google-beta` ~> 6.0): Artifact Registry · SAs de
+  runtime de mínimo privilegio (api/worker, sin keys — usan la identidad del servicio) · Pub/Sub
+  (topic + DLQ + suscripción con `DeadLetterPolicy` **+ IAM del service agent de Pub/Sub**, cerrando el
+  gap que G1 dejó "para Terraform") · GCS data lake (lifecycle frío + IAM bucket-scoped) · BigQuery
+  dataset + external table NDJSON (declara lo que hacía `bigquery-setup.mjs`) · Cloud SQL Postgres ·
+  Memorystore Redis · VPC + **Serverless VPC Access connector** (Cloud Run → Redis) · Secret Manager
+  (connection string de Postgres + token de ingesta) · **2× Cloud Run v2** (API público, Worker
+  interno) always-on · sitio de Firebase Hosting. Estado remoto en GCS (backend parametrizado).
+- **Dockerfiles** multi-stage .NET 8 (`apps/api/Dockerfile`, `apps/worker/Dockerfile`, contexto = raíz,
+  restore cacheado por csproj) + `.dockerignore`. API sobre `aspnet:8.0`, worker sobre `runtime:8.0`.
+- **Container-readiness (cambios mínimos de app):** (a) `WorkerHealthService` escucha en `http://+:$PORT`
+  cuando Cloud Run inyecta `PORT` (en local sigue `localhost:Health:Port`, evita URL ACL en Windows);
+  (b) CORS del API configurable por `Cors:Origins` (en dev = `localhost:4200`; en prod = dominio de
+  Firebase Hosting). Sin cambios de lógica de dominio.
+- **Cómputo always-on (decisión):** worker queda **pull + min-instances=1** (cero cambio de arquitectura);
+  API igual (forwarders Redis + SignalR son long-lived). `cpu_idle=false`. Worker `max-instances=1`
+  (coherencia de la caché de incidentes, AUD-017).
+
+### Hallazgos
+
+| Sev | Hallazgo | Acción | Estado |
+|-----|----------|--------|--------|
+| 🟢  | IaC declarativo del plano completo en GCP (reemplaza CDK), `terraform validate` limpio | `infra/terraform/` 16 recursos lógicos | Resuelto |
+| 🟢  | El gap de IAM de la DLQ de Pub/Sub (anotado en G1/AUD-021 como "lo hará Terraform") | `pubsub_topic_iam_member`/`subscription_iam_member` al service agent de Pub/Sub | Resuelto |
+| 🟠  | **Costo real al desplegar:** Cloud SQL + Memorystore + Cloud Run always-on ≈ US$70–120/mes encendido | Split **G5a (validate, $0)** / **G5b (apply acotado + teardown)**; tiers mínimos; Budget+Alert | Mitigado |
+| 🟡  | Memorystore solo expone IP privada → Cloud Run necesita VPC connector (complejidad + costo extra) | `network.tf` (VPC + /28 connector, egress `PRIVATE_RANGES_ONLY`) | Resuelto |
+| 🔵  | `google_firebase_project` daría "already exists" (Firebase ya activo desde G3) | No se gestiona aquí; solo el `hosting_site` (documentado) | Aceptado |
+| 🔵  | `terraform plan`/`apply` requieren credenciales admin + cobran → no se corren en G5a | Diferido a G5b con runbook en `infra/terraform/README.md` | Aceptado (por diseño) |
+
+### Verificaciones
+
+- [x] `terraform fmt` + `terraform init -backend=false` (providers google/google-beta/random resueltos) +
+      **`terraform validate` → "Success! The configuration is valid."**
+- [x] `dotnet build Atalaya.sln` ✅ (cambios de WorkerHealthService + CORS) · `nx test api-tests` **43/43**.
+- [x] **Build de imágenes Docker** local: API (`atalaya-api:local`) y Worker (`atalaya-worker:local`)
+      construyen (restore+publish multi-stage en contenedor).
+- [ ] `terraform plan`/`apply` + smoke E2E en la nube + teardown → **G5b** (requiere credenciales admin
+      + ventana de costo acotada).
+
+### Conclusión
+
+El despliegue real ya tiene su IaC: un módulo Terraform que describe **todo** el plano de control GCP
+(mensajería, datos, cómputo, hosting), validado, con las apps contenerizadas y listas para Cloud Run.
+La **revisión crítica** del split por costo evita encender la factura sin necesidad; además el Terraform
+**cierra el gap de IAM de la DLQ** que arrastrábamos desde G1. Queda **G5b** (apply + verificación E2E en
+la nube + teardown) y **G6** (medición real + script de teardown).
+
+**Veredicto:** ✅ G5a cerrada (IaC escrito y validado, imágenes que construyen). El despliegue vivo es G5b.
+
+---
+
 ## AUD-024 — Pivote a GCP · G4: analítica con BigQuery sobre el data lake (2026-06-24)
 
 **Fase:** Pivote a GCP ([ADR-013](./SAD-Atalaya.md)), **fase G4** del roadmap de [AUD-020](#aud-020--decisión-pivote-de-nube-aws--gcp-2026-06-23). Cierra el equivalente a Athena: consultas analíticas sobre el data lake **sin copiar datos**.

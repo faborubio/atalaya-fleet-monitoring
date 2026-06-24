@@ -27,6 +27,15 @@ obj/
 cdk.out/
 *.cdk.staging/
 
+# Terraform (G5) — estado, plan y vars con secretos NUNCA se suben; sí el lockfile de providers
+infra/terraform/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+infra/terraform/terraform.tfvars
+!infra/terraform/terraform.tfvars.example
+
 # Logs
 *.log
 npm-debug.log*

@@ -138,7 +138,12 @@ curl "http://localhost:3000/api/analytics/devices?minutes=60&limit=10"
 
 ---
 
-## 2. Despliegue en AWS ⛔ *(planificado, no implementado)*
+> **⚠️ Pivote a GCP (ADR-013):** el target real de despliegue es **GCP con Terraform**, no AWS. La infra
+> viva se define en **`infra/terraform/`** (Cloud Run + Cloud SQL + Memorystore + Pub/Sub + GCS + BigQuery
+> + Firebase Hosting). Ver **[infra/terraform/README.md](./infra/terraform/README.md)** para el runbook de
+> despliegue (G5b). La sección AWS de abajo queda como historia de diseño (el CDK de `infra/cdk/` no se borra).
+
+## 2. Despliegue en AWS ⛔ *(planificado, no implementado — reemplazado por GCP/Terraform, ADR-013)*
 
 Toda la infra se define con **AWS CDK** (ADR-009). Nada se crea a mano en la consola.
 

@@ -1,0 +1,16 @@
+# Copia a terraform.tfvars y ajusta. NO subas terraform.tfvars con secretos al repo.
+project_id = "fabian-portafolio"
+region     = "us-central1"
+
+# Imágenes (se publican en Artifact Registry en G5b antes del apply):
+#   us-central1-docker.pkg.dev/fabian-portafolio/atalaya/api:v1
+#   us-central1-docker.pkg.dev/fabian-portafolio/atalaya/worker:v1
+api_image    = ""
+worker_image = ""
+
+# Token de ingesta (cámbialo). Va a Secret Manager.
+ingest_token = "change-me-ingest-token"
+
+# Dominio de la SPA (se conoce tras crear el sitio de Hosting; se rellena en G5b):
+#   cors_origins = ["https://atalaya-dashboard.web.app"]
+cors_origins = []

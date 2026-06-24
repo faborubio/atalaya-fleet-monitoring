@@ -123,9 +123,14 @@ if (gcpAnalytics.AnalyticsEnabled)
         new BigQueryAnalyticsQuery(BigQueryClient.Create(gcpAnalytics.ProjectId), gcpAnalytics));
 }
 
+// Orígenes permitidos del dashboard. En dev = localhost:4200; en la nube (G5) la SPA vive en Firebase
+// Hosting → se inyecta su dominio por config (`Cors:Origins`, lista). SignalR exige orígenes explícitos
+// (no comodín) porque usa credenciales (WebSocket con cookies/token).
 const string DevCors = "atalaya-dev";
+var corsOrigins = builder.Configuration.GetSection("Cors:Origins").Get<string[]>()
+    ?? ["http://localhost:4200"];
 builder.Services.AddCors(options => options.AddPolicy(DevCors, policy => policy
-    .WithOrigins("http://localhost:4200")
+    .WithOrigins(corsOrigins)
     .AllowAnyHeader()
     .AllowAnyMethod()
     .AllowCredentials())); // requerido por SignalR (WebSocket con credenciales)

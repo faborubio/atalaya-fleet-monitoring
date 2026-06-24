@@ -19,5 +19,11 @@ public sealed class GcpOptions
     /// <summary>Host:puerto del emulador Pub/Sub. Vacío = Pub/Sub real (no auto-crea topología).</summary>
     public string EmulatorHost { get; set; } = string.Empty;
 
+    /// <summary>Bucket del data lake en Cloud Storage (ADR-007), espeja el bucket S3.</summary>
+    public string Bucket { get; set; } = "atalaya-datalake";
+    /// <summary>URL del emulador GCS (fake-gcs-server), p.ej. <c>http://localhost:4443</c>. Vacío = GCS real.</summary>
+    public string StorageEmulatorHost { get; set; } = string.Empty;
+
     public bool UsesEmulator => !string.IsNullOrWhiteSpace(EmulatorHost);
+    public bool UsesStorageEmulator => !string.IsNullOrWhiteSpace(StorageEmulatorHost);
 }

@@ -61,8 +61,8 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
 ([AUD-016](./AUDIT.md) + [AUD-017](./AUDIT.md)) + **Fase 3 endurecimiento operativo**
 ([AUD-018](./AUDIT.md)) + **Fase 3 seguridad: auth de lecturas OIDC/JWT** ([AUD-019](./AUDIT.md)).
 **El producto (en AWS/LocalStack) está completo.** **Pivote a GCP en marcha** ([AUD-020](./AUDIT.md),
-roadmap G0…G6): **G1 (mensajería Pub/Sub) hecho y verificado E2E** contra el emulador
-([AUD-021](./AUDIT.md)). Lo siguiente: G2 (GCS + Cloud SQL).
+roadmap G0…G6): **G1 (Pub/Sub)** ([AUD-021](./AUDIT.md)) y **G2 (data lake en Cloud Storage)**
+([AUD-022](./AUDIT.md)) hechos y verificados E2E contra emuladores. Lo siguiente: G3 (Identity Platform).
 
 ### Hecho
 - ✅ SAD v1.0.1 (ADR-001…011) + docs base. Repo en GitHub (12+ commits).
@@ -152,10 +152,15 @@ cero pérdida (59.200/59.200). Deuda menor: reintento/persistencia ante `Publish
   Config sección `Gcp` (`ProjectId`/`TopicId`/`SubscriptionId`/`EmulatorHost`). El cliente apunta al
   emulador por `PUBSUB_EMULATOR_HOST` (de `Gcp:EmulatorHost`); auto-crea topic+suscripción contra el
   emulador (idempotente, con reintento si aún levanta), en prod lo hará Terraform (G5). En modo Gcp el
-  data lake crudo = `NullRawEventArchive` (GCS es G2).
+  data lake crudo = `GcsRawEventArchive` (G2).
   **Resiliencia (paridad SQS):** suscripción con `DeadLetterPolicy` (DLQ `atalaya-telemetry-dlq`, 5
   intentos); handler distingue **veneno** (no deserializa → `Ack`+log+métrica `atalaya.events.poison`)
   de **transitorio** (→`Nack`, reintenta→DLQ). En GCP real la DLQ exige IAM al SA de Pub/Sub (Terraform, G5).
+- **Data lake GCS G2 (AUD-022, ADR-013)**: `GcsRawEventArchive` (worker, modo Gcp) espeja al
+  `S3RawEventArchive` y reusa `RawEventKey` (clave `raw/yyyy/MM/dd/{sha256}.json`). `StorageClient` con
+  `BaseUri`+`UnauthenticatedAccess` explícitos contra **fake-gcs** (el cliente .NET no resuelve bien
+  `STORAGE_EMULATOR_HOST` con fake-gcs); en GCP real `StorageClient.Create()` (ADC). Config `Gcp:Bucket`
+  + `Gcp:StorageEmulatorHost`. Cloud SQL = swap de connection string (sin código, G5).
 - Interfaces de extensión (para swaps sin reescribir): `ITelemetryPublisher`, `IDeviceStateRepository`,
   `IAlertIncidentStore`, `ITelemetryArchive`, `IRawEventArchive`, `IEventDeduplicator`,
   `ITelemetryBroadcaster`, `IAlertBroadcaster`.
@@ -170,11 +175,11 @@ npm start               # dashboard :4200
 npx nx build simulator
 node dist/apps/simulator/main.js --rate 2000 --devices 100 --duration 30 --url http://localhost:3000/ingest --token dev-ingest-token
 ```
-**Modo GCP (Pub/Sub, AUD-021)** — emulador en vez de LocalStack, costo $0:
+**Modo GCP (Pub/Sub + GCS, AUD-021/022)** — emuladores en vez de LocalStack, costo $0:
 ```
-docker compose -f infra/docker-compose.yml up -d redis postgres pubsub-emulator   # perfil gcp
+docker compose -f infra/docker-compose.yml up -d redis postgres pubsub-emulator fake-gcs   # perfil gcp
 $env:Telemetry__Transport="Gcp"; npx nx serve api      # publica al emulador Pub/Sub
-$env:Telemetry__Transport="Gcp"; npx nx serve worker   # consume del emulador
+$env:Telemetry__Transport="Gcp"; npx nx serve worker   # consume Pub/Sub + archiva en GCS (fake-gcs)
 ```
 Verificación: `npx nx run-many -t build lint test` · `nx test api-tests` (**42/42** con Docker;
 **39 + 3 saltados** sin Docker, por los tests de Testcontainers). Health: `curl :3000/health/ready`
@@ -255,7 +260,9 @@ Para retomar, leer §1 (banner de pivote) + §5 + [AUD-020](./AUDIT.md) (roadmap
 1. **G1 — Pub/Sub** ✅ **HECHO** ([AUD-021](./AUDIT.md)): `GcpPubSubBatchPublisher` (API) +
    `GcpPubSubConsumer` (worker) tras el flag `Telemetry:Transport=Gcp`, lote común en
    `TelemetryBatchProcessor`, readiness `IWorkerReadiness`. Verificado E2E contra el emulador.
-2. **G2 — GCS + camino frío**: `GcsRawEventArchive` (fake-gcs-server local) · Cloud SQL = connection string.
+2. **G2 — GCS + camino frío** ✅ **HECHO** ([AUD-022](./AUDIT.md)): `GcsRawEventArchive` (reusa
+   `RawEventKey`) contra fake-gcs; `StorageClient` con `BaseUri`+`UnauthenticatedAccess` en emulador.
+   Verificado E2E. Cloud SQL = connection string (sin código, G5).
 3. **G3 — Auth Identity Platform**: `Auth:Mode=Oidc` real + login Angular (Firebase Auth) + roles por claims.
 4. **G4 — BigQuery**: data lake GCS → BigQuery (cierra Athena).
 5. **G5 — IaC Terraform + despliegue Cloud Run** (API+worker) + SPA a Firebase Hosting.

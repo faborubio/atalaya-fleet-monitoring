@@ -2,11 +2,12 @@
 # Reproduce el pipeline event-driven en local sin nube real:
 #   - LocalStack (AWS): SNS (fan-out) + SQS (buffer + DLQ) + S3 (data lake)
 #   - pubsub-emulator (GCP, ADR-013): broker Pub/Sub (perfil "gcp", no arranca por defecto)
+#   - fake-gcs (GCP, ADR-013): data lake Cloud Storage (perfil "gcp")
 #   - Redis: set de deduplicación (ADR-006) + backplane de SignalR (ADR-002)
 #   - Postgres: read models + telemetría (ADR-005/007)
 #
 # Uso (AWS, por defecto):  docker compose -f infra/docker-compose.yml up -d
-# Uso (GCP, ADR-013):      docker compose -f infra/docker-compose.yml up -d redis postgres pubsub-emulator
+# Uso (GCP, ADR-013):      docker compose -f infra/docker-compose.yml up -d redis postgres pubsub-emulator fake-gcs
 #       docker compose -f infra/docker-compose.yml down   (añade -v para borrar datos)
 
 name: atalaya-dev
@@ -43,6 +44,20 @@ services:
       - '8085:8085'
     healthcheck:
       test: ['CMD-SHELL', "timeout 1 bash -c '</dev/tcp/localhost/8085' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Emulador de Google Cloud Storage (ADR-013, fase G2): data lake de eventos crudos. Perfil "gcp".
+  # `-scheme http` para que el cliente .NET (STORAGE_EMULATOR_HOST=http://localhost:4443) conecte sin TLS.
+  fake-gcs:
+    image: fsouza/fake-gcs-server:latest
+    profiles: ['gcp']
+    command: ['-scheme', 'http', '-port', '4443', '-external-url', 'http://localhost:4443']
+    ports:
+      - '4443:4443'
+    healthcheck:
+      test: ['CMD-SHELL', "wget -q -O- http://localhost:4443/storage/v1/b || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10

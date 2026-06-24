@@ -36,6 +36,54 @@ proyecto.
 
 ---
 
+## AUD-022 — Pivote a GCP · G2: data lake en Cloud Storage (2026-06-24)
+
+**Fase:** Pivote a GCP ([ADR-013](./SAD-Atalaya.md)), **fase G2** del roadmap de [AUD-020](#aud-020--decisión-pivote-de-nube-aws--gcp-2026-06-23).
+**Alcance:** Camino frío crudo en Cloud Storage (reemplaza el `NullRawEventArchive` del modo Gcp) +
+Cloud SQL (solo connection string). Verificado contra el emulador **fake-gcs-server** (costo $0).
+**Auditor:** Fabián Rubio + Claude
+
+### Qué se hizo
+
+- **`GcsRawEventArchive`** (`IRawEventArchive`), espejo del `S3RawEventArchive`: vuelca cada lote crudo
+  como objeto JSON inmutable bajo `raw/yyyy/MM/dd/{sha256}.json`, **reusando `RawEventKey`** (clave por
+  hash de contenido, AUD-016) → una reentrega del mismo lote sobrescribe el mismo objeto. Es la base de
+  **BigQuery** en GCP real (G4). En modo Gcp reemplaza al `NullRawEventArchive` de G1.
+- **Cliente Storage**: contra fake-gcs se fija `BaseUri` + `UnauthenticatedAccess` explícitos (el
+  cliente .NET arma mal la URL desde `STORAGE_EMULATOR_HOST` con fake-gcs → 404 en CreateBucket); en
+  GCP real usa `StorageClient.Create()` (credenciales del entorno, ADC).
+- **Infra**: servicio `fake-gcs` en docker-compose (perfil `gcp`, `-scheme http`). Config
+  `Gcp:Bucket` + `Gcp:StorageEmulatorHost`. **Cloud SQL**: sin código — el Postgres de read models /
+  telemetría apunta por connection string a Cloud SQL en prod (G5); en dev sigue el Postgres local.
+
+### Hallazgos
+
+| Sev | Hallazgo | Acción | Estado |
+|-----|----------|--------|--------|
+| 🟢  | Paridad S3↔GCS tras `IRawEventArchive`, reusando la clave idempotente | `GcsRawEventArchive` + `RawEventKey` común | Resuelto |
+| 🟡  | El cliente .NET no resuelve bien la URL del emulador desde `STORAGE_EMULATOR_HOST` (404) | `BaseUri`+`UnauthenticatedAccess` explícitos contra fake-gcs | Resuelto |
+| 🔵  | `EnsureBucket` es fail-fast al arrancar (un data lake inalcanzable impide arrancar) | Igual que S3; aceptable (fallar rápido ante data lake ausente) | Aceptado (por diseño) |
+
+### Verificaciones
+
+- [x] `dotnet build Atalaya.sln` ✅ · `nx test api-tests`: **42/42** (sin cambios; el archivo GCS es
+      glue cubierto por E2E, igual que S3 no tiene unit test).
+- [x] **E2E contra fake-gcs** (`docker compose up -d redis postgres pubsub-emulator fake-gcs`, worker en
+      `Telemetry:Transport=Gcp`): `POST /ingest`→**202**; el lote aterriza en GCS como
+      `raw/2026/06/24/{sha256}.json` (application/json) y su descarga devuelve el lote crudo **exacto**;
+      el read model (`/api/devices`) y la métrica `atalaya.telemetry.archived` confirman la cadena
+      completa **API→Pub/Sub→worker→Postgres+GCS**.
+
+### Conclusión
+
+El camino frío crudo ya es real en GCP: el data lake S3 tiene su equivalente GCS sin tocar el dominio
+ni la clave idempotente. Queda **G3** (Identity Platform), **G4** (BigQuery sobre este lake) y el
+despliegue real (G5). Cloud SQL no requirió código: es swap de connection string en G5.
+
+**Veredicto:** ✅ G2 cerrada y verificada E2E contra el emulador.
+
+---
+
 ## AUD-021 — Pivote a GCP · G1: mensajería Pub/Sub tras el flag (2026-06-23)
 
 **Fase:** Pivote a GCP ([ADR-013](./SAD-Atalaya.md)), **fase G1** del roadmap de [AUD-020](#aud-020--decisión-pivote-de-nube-aws--gcp-2026-06-23). Primera implementación real del pivote.
@@ -128,7 +176,7 @@ implementación**: a esta fecha **nada está migrado**; el sistema sigue corrien
 |------|-----|-----------|--------|
 | **G0** | Fundaciones: ADR-013 + docs · proyecto GCP · **Budget+Alert** (tope) · habilitar APIs · service accounts | $0 | ⬜ (docs ✅) |
 | **G1** | Mensajería **Pub/Sub**: `PubSubBatchPublisher` + consumidor en worker, tras el flag; E2E contra el **emulador** | $0 | ✅ ([AUD-021](#aud-021--pivote-a-gcp--g1-mensajería-pubsub-tras-el-flag-2026-06-23)) |
-| **G2** | **GCS** + camino frío: `GcsRawEventArchive` (fake-gcs local) · Cloud SQL = solo connection string | $0 | ⬜ |
+| **G2** | **GCS** + camino frío: `GcsRawEventArchive` (fake-gcs local) · Cloud SQL = solo connection string | $0 | ✅ ([AUD-022](#aud-022--pivote-a-gcp--g2-data-lake-en-cloud-storage-2026-06-24)) |
 | **G3** | **Auth Identity Platform**: `Auth:Mode=Oidc` real · login en Angular (Firebase Auth) · roles por custom claims | ~$0 | ⬜ |
 | **G4** | **BigQuery**: data lake GCS → BigQuery (external/load) · consultas analíticas (cierra Athena) | bajo | ⬜ |
 | **G5** | **IaC Terraform** + despliegue **Cloud Run** (API+worker) + SPA a **Firebase Hosting** | medio | ⬜ |

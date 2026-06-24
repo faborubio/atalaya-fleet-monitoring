@@ -4,6 +4,7 @@ using Amazon.SQS;
 using Atalaya.Persistence;
 using Atalaya.Realtime;
 using Atalaya.Worker;
+using Google.Cloud.Storage.V1;
 using OpenTelemetry.Metrics;
 
 var builder = Host.CreateApplicationBuilder(args);
@@ -34,11 +35,20 @@ if (useGcp)
 {
     var gcp = builder.Configuration.GetSection("Gcp").Get<GcpOptions>() ?? new GcpOptions();
     builder.Services.AddSingleton(gcp);
-    // El cliente honra PUBSUB_EMULATOR_HOST para apuntar al emulador (dev, costo $0).
+    // Pub/Sub honra PUBSUB_EMULATOR_HOST para apuntar al emulador (dev, costo $0); vacío = real (ADC).
     if (gcp.UsesEmulator)
         Environment.SetEnvironmentVariable("PUBSUB_EMULATOR_HOST", gcp.EmulatorHost);
-    // El data lake GCS llega en G2; por ahora el camino frío crudo es no-op en modo Gcp.
-    builder.Services.AddSingleton<IRawEventArchive, NullRawEventArchive>();
+    // Data lake en Cloud Storage (G2): reemplaza al no-op; reusa RawEventKey (clave por hash).
+    // Contra fake-gcs se fija BaseUri+acceso anónimo explícitos (el cliente .NET no arma bien la URL
+    // desde STORAGE_EMULATOR_HOST con fake-gcs → 404); en GCP real usa credenciales del entorno (ADC).
+    builder.Services.AddSingleton(_ => gcp.UsesStorageEmulator
+        ? new StorageClientBuilder
+        {
+            BaseUri = gcp.StorageEmulatorHost.TrimEnd('/') + "/storage/v1/",
+            UnauthenticatedAccess = true,
+        }.Build()
+        : StorageClient.Create());
+    builder.Services.AddSingleton<IRawEventArchive, GcsRawEventArchive>();
     builder.Services.AddSingleton<IWorkerReadiness, PubSubReadiness>();
     builder.Services.AddHostedService<GcpPubSubConsumer>();
 }

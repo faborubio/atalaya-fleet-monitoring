@@ -29,7 +29,7 @@ que estresar.
 > - **Camino frío:** telemetría particionada por tiempo (retención por `DROP PARTITION`) + data lake S3 idempotente + vista histórica.
 > - **Productivización:** infra como **AWS CDK** (desplegada a LocalStack), push **por viewport**, **readiness** (`/health/ready`) y graceful shutdown, tests de integración con **Testcontainers**.
 >
-> Detalle por fase en [AUDIT.md](./AUDIT.md) (AUD-001…021; AUD-020 = decisión de pivote a GCP, AUD-021 = G1 Pub/Sub).
+> Detalle por fase en [AUDIT.md](./AUDIT.md) (AUD-001…022; AUD-020 = decisión de pivote a GCP, AUD-021 = G1 Pub/Sub, AUD-022 = G2 Cloud Storage).
 
 ---
 
@@ -193,7 +193,7 @@ Más detalle (modos, endpoints, rollback) en [DEPLOY.md](./DEPLOY.md).
 |---|---|---|
 | **G0 — Fundaciones** | Proyecto GCP + **Budget+Alert** + APIs + service accounts | ⬜ |
 | **G1 — Mensajería Pub/Sub** | `PubSubBatchPublisher` + consumidor (flag `Telemetry:Transport=Gcp`), E2E contra el emulador | ✅ ([AUD-021](./AUDIT.md)) |
-| **G2 — Cloud Storage + camino frío** | `GcsRawEventArchive` (fake-gcs local) + Cloud SQL | ⬜ |
+| **G2 — Cloud Storage + camino frío** | `GcsRawEventArchive` (fake-gcs local) + Cloud SQL | ✅ ([AUD-022](./AUDIT.md)) |
 | **G3 — Auth Identity Platform** | `Auth:Mode=Oidc` real + login Angular (Firebase Auth) + roles por claims | ⬜ |
 | **G4 — BigQuery** | Data lake GCS → BigQuery (cierra Athena) | ⬜ |
 | **G5 — IaC + despliegue** | Terraform + **Cloud Run** (API+worker) + SPA a **Firebase Hosting** | ⬜ |

@@ -161,6 +161,12 @@ cero pérdida (59.200/59.200). Deuda menor: reintento/persistencia ante `Publish
   `BaseUri`+`UnauthenticatedAccess` explícitos contra **fake-gcs** (el cliente .NET no resuelve bien
   `STORAGE_EMULATOR_HOST` con fake-gcs); en GCP real `StorageClient.Create()` (ADC). Config `Gcp:Bucket`
   + `Gcp:StorageEmulatorHost`. Cloud SQL = swap de connection string (sin código, G5).
+- **Dedup check+commit (revisión crítica G2, AUD-022)**: `IEventDeduplicator` es de dos pasos —
+  `FilterNewAsync` solo consulta (`EXISTS`, no marca) y `CommitAsync` marca (`SET`) **tras** aplicar
+  todos los efectos en `TelemetryBatchProcessor`. Antes el dedup marcaba al filtrar (`SET NX`), así que
+  un fallo posterior (p.ej. subida a GCS) + redelivery filtraba el evento como duplicado → hueco
+  permanente en el data lake. Seguro porque todos los efectos son idempotentes (guard `seq`, clave por
+  hash, máquina de incidentes). Aplica a ambos brokers (SQS y Pub/Sub).
 - Interfaces de extensión (para swaps sin reescribir): `ITelemetryPublisher`, `IDeviceStateRepository`,
   `IAlertIncidentStore`, `ITelemetryArchive`, `IRawEventArchive`, `IEventDeduplicator`,
   `ITelemetryBroadcaster`, `IAlertBroadcaster`.

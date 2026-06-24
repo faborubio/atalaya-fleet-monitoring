@@ -61,6 +61,7 @@ Cloud SQL (solo connection string). Verificado contra el emulador **fake-gcs-ser
 | Sev | Hallazgo | Acción | Estado |
 |-----|----------|--------|--------|
 | 🟢  | Paridad S3↔GCS tras `IRawEventArchive`, reusando la clave idempotente | `GcsRawEventArchive` + `RawEventKey` común | Resuelto |
+| 🟠  | **Pérdida de eventos en el data lake (revisión crítica G2):** el dedup marcaba el evento *antes* de los efectos (`SET NX` al filtrar); un fallo transitorio de GCS → `Nack`→redelivery → el reintento lo filtraba como duplicado → hueco permanente en el lake (y se saltaba la evaluación de alertas) | Dedup **check + commit**: `FilterNewAsync` solo consulta (`EXISTS`), `CommitAsync` marca (`SET`) **tras** aplicar los efectos; seguro porque todos son idempotentes | Resuelto |
 | 🟡  | El cliente .NET no resuelve bien la URL del emulador desde `STORAGE_EMULATOR_HOST` (404) | `BaseUri`+`UnauthenticatedAccess` explícitos contra fake-gcs | Resuelto |
 | 🔵  | `EnsureBucket` es fail-fast al arrancar (un data lake inalcanzable impide arrancar) | Igual que S3; aceptable (fallar rápido ante data lake ausente) | Aceptado (por diseño) |
 
@@ -73,14 +74,20 @@ Cloud SQL (solo connection string). Verificado contra el emulador **fake-gcs-ser
       `raw/2026/06/24/{sha256}.json` (application/json) y su descarga devuelve el lote crudo **exacto**;
       el read model (`/api/devices`) y la métrica `atalaya.telemetry.archived` confirman la cadena
       completa **API→Pub/Sub→worker→Postgres+GCS**.
+- [x] **E2E del fix de dedup (sin pérdida):** con fake-gcs **detenido**, un evento entra al read model
+      pero su subida a GCS falla (socket refused en el log) → `Nack`/reintento sin confirmar dedup; al
+      **restaurar** fake-gcs, el evento se **reprocesa y aterriza** en GCS (`raw/.../{sha256}.json`).
+      Con el orden anterior se habría perdido (filtrado como duplicado en el reintento).
 
 ### Conclusión
 
 El camino frío crudo ya es real en GCP: el data lake S3 tiene su equivalente GCS sin tocar el dominio
-ni la clave idempotente. Queda **G3** (Identity Platform), **G4** (BigQuery sobre este lake) y el
-despliegue real (G5). Cloud SQL no requirió código: es swap de connection string en G5.
+ni la clave idempotente. La **revisión crítica** además cerró una pérdida de eventos pre-existente
+(dedup antes de los efectos) que solo se volvía visible con el lake real — ahora dedup **check+commit**
+garantiza que un fallo transitorio reprocesa en vez de perder. Queda **G3** (Identity Platform),
+**G4** (BigQuery sobre este lake) y el despliegue real (G5). Cloud SQL es swap de connection string (G5).
 
-**Veredicto:** ✅ G2 cerrada y verificada E2E contra el emulador.
+**Veredicto:** ✅ G2 cerrada y verificada E2E (incluida la revisión crítica y su fix).
 
 ---
 

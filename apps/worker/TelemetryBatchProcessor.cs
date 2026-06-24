@@ -24,7 +24,7 @@ public sealed class TelemetryBatchProcessor(
     {
         if (events.Count == 0) return;
 
-        // Dedup idempotente (ADR-006): descarta lo ya visto antes de aplicar efectos.
+        // Dedup idempotente (ADR-006), check sin marcar: descarta lo ya confirmado.
         var fresh = await deduplicator.FilterNewAsync(events, ct);
         var dups = events.Count - fresh.Count;
         if (dups > 0) metrics.AddDuplicates(dups);
@@ -56,5 +56,10 @@ public sealed class TelemetryBatchProcessor(
                 metrics.AddAlerts(transitions.Count);
             }
         }
+
+        // Confirma el dedup SOLO tras aplicar todos los efectos: si algo falló antes, el reintento
+        // (Nack→redelivery) reprocesa en vez de perder el evento (p.ej. del data lake). Seguro porque
+        // todos los efectos son idempotentes (guard seq, clave por hash en GCS/S3, máquina de incidentes).
+        await deduplicator.CommitAsync(fresh, ct);
     }
 }

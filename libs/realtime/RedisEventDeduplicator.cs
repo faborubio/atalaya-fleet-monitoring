@@ -5,9 +5,11 @@ using StackExchange.Redis;
 namespace Atalaya.Realtime;
 
 /// <summary>
-/// Dedup en Redis: <c>SET dedup:{eventId} 1 NX EX ttl</c>. El SET con NX es atómico y
-/// devuelve true solo la primera vez que se ve la clave; el TTL acota el estado (ADR-006).
-/// El lote se resuelve por pipeline para un solo round-trip.
+/// Dedup en Redis en dos pasos (ADR-006): <see cref="FilterNewAsync"/> consulta <c>EXISTS</c> (no
+/// muta) y <see cref="CommitAsync"/> hace <c>SET dedup:{eventId} 1 EX ttl</c> tras aplicar los
+/// efectos. Marcar al confirmar (no al filtrar) evita perder un evento si un efecto posterior falla y
+/// el mensaje se reentrega. El TTL acota el estado; el lote se resuelve por pipeline (un round-trip).
+/// La carrera de dos entregas concurrentes del mismo evento es inocua: ambos efectos son idempotentes.
 /// </summary>
 public sealed class RedisEventDeduplicator(
     IConnectionMultiplexer redis, IOptions<RedisOptions> options) : IEventDeduplicator
@@ -21,16 +23,28 @@ public sealed class RedisEventDeduplicator(
 
         var db = redis.GetDatabase();
         var batch = db.CreateBatch();
-        var flags = new Task<bool>[events.Count];
+        var exists = new Task<bool>[events.Count];
         for (var i = 0; i < events.Count; i++)
-            flags[i] = batch.StringSetAsync(
-                $"dedup:{events[i].EventId}", "1", _ttl, when: When.NotExists);
+            exists[i] = batch.KeyExistsAsync($"dedup:{events[i].EventId}");
         batch.Execute();
-        await Task.WhenAll(flags);
+        await Task.WhenAll(exists);
 
         var fresh = new List<TelemetryEvent>(events.Count);
         for (var i = 0; i < events.Count; i++)
-            if (flags[i].Result) fresh.Add(events[i]); // true = clave nueva (no duplicado)
+            if (!exists[i].Result) fresh.Add(events[i]); // no existe = aún no confirmado
         return fresh;
+    }
+
+    public async Task CommitAsync(IReadOnlyList<TelemetryEvent> events, CancellationToken ct = default)
+    {
+        if (events.Count == 0) return;
+
+        var db = redis.GetDatabase();
+        var batch = db.CreateBatch();
+        var sets = new Task<bool>[events.Count];
+        for (var i = 0; i < events.Count; i++)
+            sets[i] = batch.StringSetAsync($"dedup:{events[i].EventId}", "1", _ttl);
+        batch.Execute();
+        await Task.WhenAll(sets);
     }
 }

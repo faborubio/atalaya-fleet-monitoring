@@ -36,6 +36,51 @@ proyecto.
 
 ---
 
+## AUD-030 — Auth: refresh-token (REST + hub en sesiones largas) (2026-06-24)
+
+**Fase:** Endurecimiento de auth (ADR-012, sobre G3/[AUD-023](#aud-023)). Último ítem de features de Fase 3.
+**Alcance:** Cerrar el gap de **refresh del token** que AUD-023 dejó "aceptado": las lecturas REST usaban el token **cacheado** (no refrescaban) y el WebSocket del hub conservaba el token hasta expirar.
+**Auditor:** Fabián Rubio + Claude
+
+### Qué se hizo
+
+- **Interceptor REST → token fresco** ([auth.interceptor.ts](./apps/atalaya-web/src/app/core/auth/auth.interceptor.ts)):
+  usa `ensureToken()` (async) en vez del token cacheado → refresca si está por expirar antes de cada
+  lectura `/api/*`. Evita 401 por token viejo en sesiones largas.
+- **Expiración expuesta** ([auth.service.ts](./apps/atalaya-web/src/app/core/auth/auth.service.ts)):
+  `getTokenExpiry()` (epoch ms) para dev (vida del JWT) y firebase (`expirationTime` del ID token).
+- **Refresh proactivo del hub** ([telemetry-stream.service.ts](./apps/atalaya-web/src/app/core/telemetry/telemetry-stream.service.ts)):
+  `accessTokenFactory` solo se evalúa al (re)conectar, así que un WS abierto conservaría el token hasta
+  expirar. Se programa una **reconexión ~30 s antes de la expiración** (stop+start re-invoca
+  `accessTokenFactory`→`ensureToken`→token fresco); el reconnect re-sincroniza el snapshot (sin huecos).
+  Timer limpiado al desconectar; reprogramado tras cada reconexión.
+
+### Hallazgos
+
+| Sev | Hallazgo | Acción | Estado |
+|-----|----------|--------|--------|
+| 🟠  | REST mandaba token cacheado → 401 al expirar en sesiones largas (gap aceptado en AUD-023) | Interceptor con `ensureToken()` | Resuelto |
+| 🟠  | WS del hub conservaba el token hasta expirar (server no re-valida por mensaje) | Reconexión proactiva antes de expirar | Resuelto |
+| 🔵  | La reconexión proactiva produce un parpadeo sub-segundo cada vida de token | Aceptable; el snapshot re-sincroniza sin huecos (mismo camino que la reconexión automática) | Aceptado |
+
+### Verificaciones
+
+- [x] `nx build/lint/test atalaya-web` ✅ (2/2).
+- [x] **E2E real** (API en modo Dev con **token de 1 min**, dashboard en navegador headless, 85 s de tiempo
+      virtual): la SPA emitió `/auth/dev-token` **3 veces** (inicial + **2 refrescos**), hizo lecturas
+      `/api/devices` → **200** (autenticadas con token fresco) y **0 respuestas 401**; el dashboard siguió
+      **en vivo con datos** tras superar la vida del token. Sin el fix, REST daría 401 al expirar.
+
+### Conclusión
+
+La sesión del dashboard ya se sostiene en el tiempo: REST refresca el token antes de cada lectura y el hub
+se reconecta proactivamente con token fresco. Cierra el gap de refresh de AUD-023 y el último ítem de
+features de Fase 3 (queda solo el despliegue real G5b).
+
+**Veredicto:** ✅ Cerrado y verificado E2E (3 emisiones de token, 0× 401, dashboard vivo con token de 1 min).
+
+---
+
 ## AUD-029 — Runbooks operativos (Fase 3) (2026-06-24)
 
 **Fase:** Madurez operativa de Fase 3 (del backlog de [AUD-015](#aud-015)). Solo documentación.

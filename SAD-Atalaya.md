@@ -352,6 +352,7 @@ Cada fase entrega algo demostrable y medido. La prueba de carga y la latencia ev
 | 1.0.6 | 2026-06-24 | Backlog frontend (ADR-010, AUD-026): **mapa real con deck.gl** (basemap OSM + `ScatterplotLayer` geolocalizado, GPU, dynamic-import fuera del bundle inicial) reemplaza el mapa canvas; **virtual scroll** (Angular CDK) en la tabla de dispositivos (sin recorte). Verificado E2E en navegador real. |
 | 1.0.7 | 2026-06-24 | Resiliencia (ADR-006, AUD-027): **replay de la DLQ** de Pub/Sub. Suscripción sobre el topic DLQ (worker/Terraform) + `IDlqReplayer` (pull→re-publica al topic principal→ack) + endpoint `POST /api/admin/dlq/replay` (RBAC admin, modo Gcp). Cierra el ciclo at-least-once: lo que cae a la DLQ se re-encola y reprocesa (idempotente). Verificado E2E contra el emulador. |
 | 1.0.8 | 2026-06-24 | Rendimiento del camino frío (ADR-005/007, AUD-028): **downsampling del histórico**. `ITelemetryArchive.QueryDownsampledAsync` (agrega por buckets de tiempo, promedio por intervalo) + `GET /api/history/series` (rango hasta 7 días). El frontend del histórico usa la serie agregada (≈200 puntos) en vez de miles de filas crudas. Verificado E2E + unit test. |
+| 1.0.9 | 2026-06-24 | Endurecimiento de auth (ADR-012, AUD-030): **refresh-token**. El interceptor REST usa `ensureToken()` (refresca antes de cada lectura) y el hub SignalR se reconecta proactivamente antes de expirar el token (sesiones largas sin 401 ni WS con token caduco). Cierra el gap aceptado en AUD-023. Verificado E2E (token de 1 min → refrescos, 0× 401). |
 
 ---
 

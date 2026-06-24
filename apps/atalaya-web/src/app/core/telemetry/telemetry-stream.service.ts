@@ -43,6 +43,9 @@ export class TelemetryStreamService {
   /** Último viewport solicitado (null = firehose). Se re-aplica tras reconectar. */
   private viewport: string[] | null = null;
 
+  /** Temporizador del refresh proactivo del token (reconexión antes de expirar, AUD-030). */
+  private refreshTimer?: ReturnType<typeof setTimeout>;
+
   async connect(): Promise<void> {
     if (this.connection) return;
 
@@ -67,6 +70,7 @@ export class TelemetryStreamService {
       this.status.set(HubConnectionState.Connected);
       void this.reapplyViewport(); // el servidor perdió el estado de grupos al reconectar
       this.connected.next(); // re-sincroniza el snapshot tras reconectar
+      this.scheduleTokenRefresh(); // la reconexión ya tomó token fresco; reprograma el siguiente
     });
     this.connection.onclose(() => this.status.set(HubConnectionState.Disconnected));
 
@@ -74,9 +78,40 @@ export class TelemetryStreamService {
       await this.connection.start();
       this.status.set(HubConnectionState.Connected);
       this.connected.next();
+      this.scheduleTokenRefresh();
     } catch {
       this.status.set(HubConnectionState.Disconnected);
     }
+  }
+
+  /**
+   * Refresh-token en conexión larga (AUD-030): `accessTokenFactory` solo se evalúa al (re)conectar,
+   * así que un WebSocket abierto conservaría el token hasta expirar. Programamos una reconexión ~30 s
+   * antes de la expiración para que el servidor reciba un token fresco. El reconnect re-sincroniza el
+   * snapshot (sin huecos). Solo aplica con auth activa (hay expiración); en Disabled no hace nada.
+   */
+  private scheduleTokenRefresh(): void {
+    clearTimeout(this.refreshTimer);
+    const expiresAt = this.auth.getTokenExpiry();
+    if (!expiresAt) return; // auth desactivada / sin token
+    const delay = Math.max(10_000, expiresAt - Date.now() - 30_000);
+    this.refreshTimer = setTimeout(() => void this.refreshConnection(), delay);
+  }
+
+  private async refreshConnection(): Promise<void> {
+    const conn = this.connection;
+    if (!conn) return;
+    try {
+      // stop()+start() re-invoca accessTokenFactory → ensureToken() devuelve un token fresco.
+      await conn.stop();
+      await conn.start();
+      this.status.set(HubConnectionState.Connected);
+      await this.reapplyViewport();
+      this.connected.next();
+    } catch {
+      this.status.set(HubConnectionState.Disconnected); // la reconexión automática tomará el relevo
+    }
+    this.scheduleTokenRefresh();
   }
 
   /**
@@ -87,6 +122,7 @@ export class TelemetryStreamService {
   async disconnect(): Promise<void> {
     const conn = this.connection;
     if (!conn) return;
+    clearTimeout(this.refreshTimer);
     this.connection = undefined;
     this.viewport = null;
     try {

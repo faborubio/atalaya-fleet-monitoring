@@ -29,7 +29,7 @@ export class AuthService {
   private readonly config = inject(AUTH_CONFIG);
 
   private token: string | null = null;
-  private expiresAt = 0; // solo modo dev
+  private expiresAt = 0; // epoch ms de expiración del token vigente (dev y firebase)
   private firebaseAuth?: Auth;
   private user: User | null = null;
 
@@ -58,6 +58,12 @@ export class AuthService {
   /** Token vigente para el interceptor HTTP (sincrónico; `null` = sin token). */
   getToken(): string | null {
     return this.token;
+  }
+
+  /** Epoch ms en que expira el token vigente (0 = sin token / auth desactivada). Lo usa el hub para
+   *  reconectar proactivamente antes de expirar (refresh-token en conexiones largas, AUD-030). */
+  getTokenExpiry(): number {
+    return this.expiresAt;
   }
 
   /** Para SignalR y refrescos: devuelve el token vigente (refresca si hace falta). */
@@ -110,9 +116,11 @@ export class AuthService {
           this.token = await user.getIdToken();
           const result = await user.getIdTokenResult();
           this.role.set((result.claims['role'] as string | undefined) ?? null);
+          this.expiresAt = Date.parse(result.expirationTime); // Firebase: ~1 h, refrescado solo
           this.authenticated.set(true);
         } else {
           this.token = null;
+          this.expiresAt = 0;
           this.role.set(null);
           this.authenticated.set(false);
         }

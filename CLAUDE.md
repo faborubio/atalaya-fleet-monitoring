@@ -265,7 +265,9 @@ está completo y verificado E2E. Lo que resta es **endurecimiento incremental** 
   hasta 7 días). Frontend del histórico usa la serie agregada (rangos 6h/24h). Verificado E2E.
 - ✅ **Runbooks operativos** hechos ([RUNBOOKS.md](./RUNBOOKS.md), [AUD-029](./AUDIT.md)): caídas de
   deps, replay de DLQ, retención, deploy/apagado ordenado, control de costo/teardown.
-- **Fase 3 — resto** (SAD §10, local, sin urgencia): login real/refresh-token (auth: hoy auto-token dev).
+- ✅ **Refresh-token** hecho ([AUD-030](./AUDIT.md)): interceptor REST usa `ensureToken()` (token fresco)
+  + hub reconecta proactivamente antes de expirar (`getTokenExpiry`). Verificado E2E (token de 1 min → 3
+  emisiones, 0× 401). Login Firebase real ya estaba (G3). **No quedan ítems de features**; solo G5b.
 - **Solo AWS real** (requiere cuenta, hoy bloqueado): **Athena** sobre el data lake S3 · medir
   throughput contra AWS · CDK multi-entorno (dev/staging/prod).
 - **Deuda menor anotada**: durabilidad del borde de ingesta = best-effort (drena al apagar, pero
@@ -379,7 +381,8 @@ Identity Platform; dashboard en modo firebase = `useFirebaseAuth=true` en `app.c
 
 ⚠️ **Costo**: BigQuery pay-per-byte (free-tier cubre dev); Cloud SQL/Memorystore cobran ociosos →
 Budget+Alert + teardown obligatorios.
-Backlog AWS-era que aplica igual en GCP (de [AUD-015](./AUDIT.md)): login real/refresh-token. (Downsampling ✅ [AUD-028](./AUDIT.md).)
+Backlog AWS-era de [AUD-015](./AUDIT.md): **todo hecho** (downsampling ✅ AUD-028 · refresh-token ✅ AUD-030 ·
+DLQ replay ✅ AUD-027 · mapa deck.gl + virtual scroll ✅ AUD-026). Solo queda el despliegue real **G5b**.
 (Mapa real deck.gl + virtual scroll ✅ [AUD-026](./AUDIT.md); DLQ replay ✅ [AUD-027](./AUDIT.md).)
 
 > Al cerrar cada sesión: actualiza §5 (estado), añade entrada en AUDIT.md si hubo cambio

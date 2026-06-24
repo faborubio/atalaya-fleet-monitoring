@@ -247,8 +247,11 @@ adquiere solo. Lecturas sin token → 401; con rol operador/admin → 200.
 **No quedan fases de features** — el producto (mapa, dispositivos, alertas-incidentes, históricos)
 está completo y verificado E2E. Lo que resta es **endurecimiento incremental** y **solo-AWS-real**:
 
+- ✅ **Mapa real (deck.gl) + virtual scroll (CDK)** hechos ([AUD-026](./AUDIT.md)): dashboard con basemap
+  OSM + `ScatterplotLayer` geolocalizado (deck.gl dynamic-import, fuera del bundle inicial); tabla de
+  dispositivos con `cdk-virtual-scroll-viewport` (sin cap). Verificado E2E en navegador real.
 - **Fase 3 — resto** (SAD §10, local, sin urgencia): DLQ **replay** · downsampling del histórico ·
-  virtual scroll + mapa real (deck.gl) · runbooks · login real/refresh-token (auth: hoy auto-token dev).
+  runbooks · login real/refresh-token (auth: hoy auto-token dev).
 - **Solo AWS real** (requiere cuenta, hoy bloqueado): **Athena** sobre el data lake S3 · medir
   throughput contra AWS · CDK multi-entorno (dev/staging/prod).
 - **Deuda menor anotada**: durabilidad del borde de ingesta = best-effort (drena al apagar, pero
@@ -362,8 +365,8 @@ Identity Platform; dashboard en modo firebase = `useFirebaseAuth=true` en `app.c
 
 ⚠️ **Costo**: BigQuery pay-per-byte (free-tier cubre dev); Cloud SQL/Memorystore cobran ociosos →
 Budget+Alert + teardown obligatorios.
-Backlog AWS-era que aplica igual en GCP (de [AUD-015](./AUDIT.md)): DLQ replay, downsampling, virtual
-scroll + mapa real (deck.gl), login real/refresh-token.
+Backlog AWS-era que aplica igual en GCP (de [AUD-015](./AUDIT.md)): DLQ replay, downsampling,
+login real/refresh-token. (Mapa real deck.gl + virtual scroll ✅ hechos, [AUD-026](./AUDIT.md).)
 
 > Al cerrar cada sesión: actualiza §5 (estado), añade entrada en AUDIT.md si hubo cambio
 > auditable, y registra en TROUBLESHOOTING.md cualquier error resuelto.

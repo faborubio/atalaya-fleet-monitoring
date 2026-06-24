@@ -20,6 +20,8 @@ interface Bounds {
   maxLng: number;
 }
 
+type RGBA = [number, number, number, number];
+
 @Component({
   selector: 'app-dashboard',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -75,15 +77,17 @@ interface Bounds {
         </p>
       }
 
-      <canvas #canvas class="dash__canvas"></canvas>
+      <div class="dash__mapwrap">
+        <div #map class="dash__map"></div>
+        <span class="dash__attrib">© OpenStreetMap contributors</span>
+      </div>
     </section>
   `,
   styleUrl: './dashboard.scss',
 })
 export class Dashboard implements AfterViewInit {
   protected readonly fleet = inject(FleetStore);
-  private readonly canvasRef =
-    viewChild.required<ElementRef<HTMLCanvasElement>>('canvas');
+  private readonly mapRef = viewChild.required<ElementRef<HTMLDivElement>>('map');
 
   protected readonly zooms = [
     { factor: 1, label: 'Todo' },
@@ -93,6 +97,12 @@ export class Dashboard implements AfterViewInit {
 
   /** Factor de zoom del viewport: 1 = toda la flota (firehose); >1 = recorte central. */
   protected readonly zoom = signal(1);
+
+  // deck.gl se carga por dynamic-import (pesado → fuera del bundle inicial y de Jest, patrón de G3).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private deck: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private deckModule: any = null;
 
   private readonly bounds = computed<Bounds | null>(() => {
     const devices = this.fleet.devices();
@@ -128,12 +138,12 @@ export class Dashboard implements AfterViewInit {
   private lastViewportSig = '';
 
   constructor() {
-    // Redibuja cuando cambia el snapshot coalescido (un repaint por ventana).
+    // Repinta la capa de puntos cuando cambia el snapshot coalescido o el viewport (una pasada por
+    // ventana, ADR-010). Si deck aún no está listo, el constructor de Deck ya recibe el estado actual.
     effect(() => {
       const devices = this.fleet.devices();
       const visible = this.visibleIds();
-      const canvas = this.canvasRef();
-      if (canvas) this.draw(canvas.nativeElement, devices, visible);
+      if (this.deck) this.deck.setProps({ layers: this.buildLayers(devices, visible) });
     });
 
     // Sincroniza el viewport con el servidor solo cuando cambia el conjunto (evita spam).
@@ -145,61 +155,90 @@ export class Dashboard implements AfterViewInit {
       this.fleet.setViewport(ids === null ? null : [...ids]);
     });
 
-    // Al salir del dashboard, vuelve al firehose para el resto de la app.
-    inject(DestroyRef).onDestroy(() => this.fleet.setViewport(null));
+    // Al salir del dashboard: vuelve al firehose y libera el contexto WebGL de deck.
+    inject(DestroyRef).onDestroy(() => {
+      this.fleet.setViewport(null);
+      this.deck?.finalize();
+    });
   }
 
-  ngAfterViewInit(): void {
-    this.resizeToParent();
+  async ngAfterViewInit(): Promise<void> {
+    const mod = await import('deck.gl');
+    this.deckModule = mod;
+
+    const center = this.initialCenter();
+    this.deck = new mod.Deck({
+      parent: this.mapRef().nativeElement,
+      views: new mod.MapView({ repeat: true }),
+      initialViewState: {
+        longitude: center.lng,
+        latitude: center.lat,
+        zoom: center.zoom,
+        pitch: 0,
+        bearing: 0,
+      },
+      controller: true, // pan + zoom reales
+      layers: this.buildLayers(this.fleet.devices(), this.visibleIds()),
+    });
   }
 
-  private resizeToParent(): void {
-    const canvas = this.canvasRef().nativeElement;
-    const rect = canvas.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.max(1, Math.floor(rect.width * dpr));
-    canvas.height = Math.max(1, Math.floor(rect.height * dpr));
-    this.draw(canvas, this.fleet.devices(), this.visibleIds());
+  private initialCenter(): { lng: number; lat: number; zoom: number } {
+    const b = this.bounds();
+    if (!b) return { lng: -99.13, lat: 19.43, zoom: 9 }; // CDMX (región del simulador)
+    return { lng: (b.minLng + b.maxLng) / 2, lat: (b.minLat + b.maxLat) / 2, zoom: 10 };
   }
 
-  private draw(
-    canvas: HTMLCanvasElement,
-    devices: DeviceState[],
-    visible: Set<string> | null
-  ): void {
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    const { width: w, height: h } = canvas;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private buildLayers(devices: DeviceState[], visible: Set<string> | null): any[] {
+    const { ScatterplotLayer, TileLayer, BitmapLayer } = this.deckModule;
 
-    ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = '#0d1117';
-    ctx.fillRect(0, 0, w, h);
-    if (devices.length === 0) return;
+    // Basemap real: tiles raster de OpenStreetMap (sin API key). renderSubLayers pinta cada tile.
+    const basemap = new TileLayer({
+      id: 'osm',
+      data: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+      minZoom: 0,
+      maxZoom: 19,
+      tileSize: 256,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      renderSubLayers: (props: any) => {
+        const { boundingBox } = props.tile;
+        return new BitmapLayer(props, {
+          data: undefined,
+          image: props.data,
+          bounds: [
+            boundingBox[0][0], boundingBox[0][1],
+            boundingBox[1][0], boundingBox[1][1],
+          ],
+        });
+      },
+    });
 
-    let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
-    for (const d of devices) {
-      minLat = Math.min(minLat, d.lat);
-      maxLat = Math.max(maxLat, d.lat);
-      minLng = Math.min(minLng, d.lng);
-      maxLng = Math.max(maxLng, d.lng);
-    }
-    const pad = 24;
-    const spanLat = maxLat - minLat || 1;
-    const spanLng = maxLng - minLng || 1;
+    // Dispositivos geolocalizados (lng/lat reales). Fuera del viewport = gris atenuado (congelados).
+    const dots = new ScatterplotLayer({
+      id: 'devices',
+      data: devices,
+      getPosition: (d: DeviceState) => [d.lng, d.lat],
+      getFillColor: (d: DeviceState) => this.colorFor(d, visible),
+      getRadius: 5,
+      radiusUnits: 'pixels',
+      radiusMinPixels: 2,
+      radiusMaxPixels: 9,
+      stroked: true,
+      getLineColor: [13, 17, 23, 255] as RGBA,
+      lineWidthMinPixels: 1,
+      pickable: false,
+      updateTriggers: {
+        // Recolorea cuando cambia el conjunto visible (el zoom de viewport).
+        getFillColor: visible === null ? 'all' : visible.size,
+      },
+    });
 
-    for (const d of devices) {
-      const x = pad + ((d.lng - minLng) / spanLng) * (w - 2 * pad);
-      // lat invertida: norte arriba
-      const y = pad + ((maxLat - d.lat) / spanLat) * (h - 2 * pad);
-      const inViewport = visible === null || visible.has(d.deviceId);
-      const t = Math.min(1, d.speedKmh / 120);
-      // Fuera del viewport: gris atenuado (congelado, no recibe deltas en vivo).
-      ctx.fillStyle = inViewport
-        ? `rgb(${Math.round(60 + t * 180)}, ${Math.round(190 - t * 120)}, 80)`
-        : 'rgba(110, 118, 129, 0.35)';
-      ctx.beginPath();
-      ctx.arc(x, y, inViewport ? 3 : 2, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    return [basemap, dots];
+  }
+
+  private colorFor(d: DeviceState, visible: Set<string> | null): RGBA {
+    if (visible !== null && !visible.has(d.deviceId)) return [110, 118, 129, 90];
+    const t = Math.min(1, d.speedKmh / 120); // verde (lento) → ámbar (rápido)
+    return [Math.round(60 + t * 180), Math.round(190 - t * 120), 80, 255];
   }
 }

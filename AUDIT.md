@@ -36,6 +36,53 @@ proyecto.
 
 ---
 
+## AUD-026 — Frontend: mapa real (deck.gl) + virtual scroll (CDK) (2026-06-24)
+
+**Fase:** Backlog de alto rendimiento de frontend (ADR-010, SAD §9), del backlog de [AUD-015](#aud-015). No es fase del pivote GCP.
+**Alcance:** Sustituir el **mapa canvas** (lat/lng normalizado a píxeles, sin geografía) por un **mapa geográfico real con deck.gl** (GPU) y la **tabla** de dispositivos por **virtual scroll** (Angular CDK). Es el ítem del backlog que más encaja con el foco del portafolio (Angular de alto rendimiento).
+**Auditor:** Fabián Rubio + Claude
+
+### Qué se hizo
+
+- **Mapa deck.gl** ([dashboard.ts](./apps/atalaya-web/src/app/features/dashboard/dashboard.ts)): `TileLayer`
+  de **OpenStreetMap** (raster, sin API key) como basemap + `ScatterplotLayer` con los dispositivos en
+  **lng/lat reales**, coloreados por velocidad (verde→ámbar); fuera del viewport = gris (congelados).
+  deck.gl se carga por **dynamic-import** (~1 MB → fuera del bundle inicial y de Jest, patrón de G3).
+  Pan/zoom reales (`controller`). Conserva stats (NFR latencia P95), indicador en vivo y los controles
+  de viewport (AUD-008). Repaint coalescido (un `setProps` por ventana de 100 ms, ADR-010).
+- **Virtual scroll** ([devices.ts](./apps/atalaya-web/src/app/features/devices/devices.ts)):
+  `cdk-virtual-scroll-viewport` (Angular CDK) sobre una grilla de divs; **se elimina el recorte de 200
+  filas** — ahora solo se renderizan las filas visibles, así escala a miles sin coste de DOM.
+- **Deps:** `deck.gl` ^9.1 + `@angular/cdk` ~20.2. Warnings CommonJS de loaders.gl silenciados con
+  `allowedCommonJsDependencies` en el build.
+
+### Hallazgos
+
+| Sev | Hallazgo | Acción | Estado |
+|-----|----------|--------|--------|
+| 🟢  | Mapa geográfico real + render GPU + virtual scroll (cierra el ítem ADR-010/AUD-015) | deck.gl + CDK, verificado E2E en navegador real | Resuelto |
+| 🟢  | Bundle inicial intacto (deck.gl pesado en chunk lazy del dashboard) | Dynamic-import + ruta lazy; build pasa budgets | Resuelto |
+| 🔵  | Tiles OSM públicos (su política desaconseja uso intensivo) | Aceptable para demo; en prod = proveedor con key/atribución reforzada | Aceptado |
+| 🔵  | El viewport (AUD-008) sigue recortando por bounds de dispositivos, no por los bounds visibles del mapa | Mantiene la suscripción server-side; mejora futura: derivar el viewport del `viewState` del mapa | Aceptado |
+
+### Verificaciones
+
+- [x] `nx build atalaya-web` (producción) ✅ pasa budgets (deck.gl en chunk lazy) · `nx lint` ✅ · `nx test` ✅ (2/2).
+- [x] **E2E en navegador real** (Chrome headless, API en InMemory + simulador, 60 dispositivos):
+      **captura del dashboard** muestra el **mapa OSM de CDMX** con los dispositivos geolocalizados y
+      coloreados por velocidad + atribución; **captura de `/devices`** muestra la grilla con virtual
+      scroll (scrollbar, filas visibles únicamente). Auth Dev (token silencioso) + hub en vivo OK.
+
+### Conclusión
+
+El dashboard pasa de una visualización abstracta a un **mapa geográfico real con render GPU** y una tabla
+que **escala a miles de filas** sin coste de DOM — el frontend luce el foco del portafolio (alto rendimiento,
+ADR-010) y se mantiene el bundle inicial pequeño (deck.gl lazy). Verificado E2E en navegador real.
+
+**Veredicto:** ✅ Cerrado y verificado E2E (capturas reales del mapa y del virtual scroll).
+
+---
+
 ## AUD-025 — Pivote a GCP · G5a: IaC con Terraform + contenedores (Cloud Run) (2026-06-24)
 
 **Fase:** Pivote a GCP ([ADR-013](./SAD-Atalaya.md)), **fase G5** (parte **G5a**) del roadmap de [AUD-020](#aud-020--decisión-pivote-de-nube-aws--gcp-2026-06-23). Reemplaza el AWS CDK como IaC.

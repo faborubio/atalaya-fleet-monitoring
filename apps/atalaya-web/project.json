@@ -15,6 +15,7 @@
         "polyfills": [],
         "tsConfig": "apps/atalaya-web/tsconfig.app.json",
         "inlineStyleLanguage": "scss",
+        "allowedCommonJsDependencies": ["long", "pbf", "jszip", "pako", "snappyjs"],
         "assets": [
           {
             "glob": "**/*",

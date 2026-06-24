@@ -36,6 +36,42 @@ proyecto.
 
 ---
 
+## AUD-029 — Runbooks operativos (Fase 3) (2026-06-24)
+
+**Fase:** Madurez operativa de Fase 3 (del backlog de [AUD-015](#aud-015)). Solo documentación.
+**Alcance:** Capturar **qué hacer en operación** ante incidentes, apoyándose en lo ya construido (readiness gateada, resiliencia at-least-once, DLQ replay, retención O(1), teardown).
+**Auditor:** Fabián Rubio + Claude
+
+### Qué se hizo
+
+- **[RUNBOOKS.md](./RUNBOOKS.md)** (síntoma → diagnóstico → acción): RB-01 dashboard sin telemetría ·
+  RB-02 Redis/Postgres/broker caído · RB-03 DLQ + **replay** (AUD-027) · RB-04 retención del histórico
+  (`Retention:Days`/`IntervalHours`, DROP PARTITION) · RB-05 deploy + apagado ordenado · RB-06 control de
+  costo + teardown GCP. Tabla de superficies de operación (health, replay, transporte, auth). Añadido al
+  mapa de documentos (CLAUDE §4) y enlazado con TROUBLESHOOTING/DEPLOY/Terraform README.
+
+### Hallazgos
+
+| Sev | Hallazgo | Acción | Estado |
+|-----|----------|--------|--------|
+| 🟢  | Faltaba el "qué hacer cuando…" operativo (distinto de los errores de dev) | RUNBOOKS.md grounded en endpoints/config reales | Resuelto |
+
+### Verificaciones
+
+- [x] Cada runbook referencia superficies **reales** verificadas en el código: `/health/ready` (checks
+      postgres/redis/sns|pubsub), `POST /api/admin/dlq/replay`, `Retention` (Days=30/IntervalHours=6),
+      `Telemetry:Transport`, `Auth:Mode`. Enlaces internos resuelven.
+
+### Conclusión
+
+La historia operativa queda escrita: ante una caída, una DLQ llena o un disco creciendo, hay un
+procedimiento claro apoyado en las capacidades reales del sistema. Cierra el último ítem no-feature de
+Fase 3 (queda solo login real/refresh-token y el despliegue G5b).
+
+**Veredicto:** ✅ Cerrado (documentación grounded en el sistema real).
+
+---
+
 ## AUD-028 — Histórico: downsampling por buckets de tiempo (2026-06-24)
 
 **Fase:** Backlog de rendimiento del camino frío (ADR-005/007, del backlog de [AUD-015](#aud-015)).

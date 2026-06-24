@@ -50,6 +50,7 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
 | [AUDIT.md](./AUDIT.md) | Bitácora de auditorías por fase/cambio |
 | [DEPLOY.md](./DEPLOY.md) | Despliegue local (LocalStack hoy; emuladores GCP en el pivote) y nube (CDK→Terraform) |
 | [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) | Errores encontrados y soluciones |
+| [RUNBOOKS.md](./RUNBOOKS.md) | Operación: qué hacer ante caídas, DLQ replay, retención, deploy, teardown |
 | **CLAUDE.md** | Este archivo: contexto entre sesiones |
 
 ## 5. Estado actual
@@ -262,8 +263,9 @@ está completo y verificado E2E. Lo que resta es **endurecimiento incremental** 
 - ✅ **Downsampling del histórico** hecho ([AUD-028](./AUDIT.md)): `ITelemetryArchive.QueryDownsampledAsync`
   + `GET /api/history/series?deviceId&minutes&buckets` (agrega en ~N puntos, promedio por intervalo; rango
   hasta 7 días). Frontend del histórico usa la serie agregada (rangos 6h/24h). Verificado E2E.
-- **Fase 3 — resto** (SAD §10, local, sin urgencia): runbooks · login real/refresh-token
-  (auth: hoy auto-token dev).
+- ✅ **Runbooks operativos** hechos ([RUNBOOKS.md](./RUNBOOKS.md), [AUD-029](./AUDIT.md)): caídas de
+  deps, replay de DLQ, retención, deploy/apagado ordenado, control de costo/teardown.
+- **Fase 3 — resto** (SAD §10, local, sin urgencia): login real/refresh-token (auth: hoy auto-token dev).
 - **Solo AWS real** (requiere cuenta, hoy bloqueado): **Athena** sobre el data lake S3 · medir
   throughput contra AWS · CDK multi-entorno (dev/staging/prod).
 - **Deuda menor anotada**: durabilidad del borde de ingesta = best-effort (drena al apagar, pero

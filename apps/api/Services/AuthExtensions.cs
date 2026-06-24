@@ -32,13 +32,15 @@ public static class AuthExtensions
                 if (auth.IsOidc)
                 {
                     // Validación contra un IdP real: el authority publica el JWKS (firmas rotables).
-                    options.Authority = auth.Authority;
-                    options.Audience = auth.Audience;
+                    // Identity Platform: authority = https://securetoken.google.com/{projectId},
+                    // audience = projectId; el rol viaja como custom claim "role".
+                    options.Authority = auth.EffectiveAuthority;
+                    options.Audience = auth.EffectiveAudience;
                     options.TokenValidationParameters = new TokenValidationParameters
                     {
                         ValidateIssuer = true,
                         ValidateAudience = true,
-                        ValidAudience = auth.Audience,
+                        ValidAudience = auth.EffectiveAudience,
                         RoleClaimType = "role",
                         NameClaimType = "sub",
                     };

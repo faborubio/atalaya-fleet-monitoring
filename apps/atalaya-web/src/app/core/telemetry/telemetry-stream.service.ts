@@ -80,6 +80,24 @@ export class TelemetryStreamService {
   }
 
   /**
+   * Cierra la conexión del hub (p.ej. al cerrar sesión, G3). Deja todo listo para un `connect()`
+   * limpio después: el siguiente connect crea una conexión nueva y re-evalúa el token
+   * (`accessTokenFactory`), evitando que un WebSocket autenticado siga abierto tras el sign-out.
+   */
+  async disconnect(): Promise<void> {
+    const conn = this.connection;
+    if (!conn) return;
+    this.connection = undefined;
+    this.viewport = null;
+    try {
+      await conn.stop();
+    } catch {
+      /* ya estaba cerrada */
+    }
+    this.status.set(HubConnectionState.Disconnected);
+  }
+
+  /**
    * Modo viewport (AUD-008): el cliente solo recibe los deltas de `deviceIds`. `null` vuelve al
    * firehose. El servidor pierde los grupos al reconectar, por eso guardamos el último viewport.
    */

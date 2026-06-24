@@ -5,6 +5,7 @@ import { App } from './app';
 import { appRoutes } from './app.routes';
 import { FleetStore } from './core/telemetry/fleet-store';
 import { AlertStore } from './core/telemetry/alert-store';
+import { AuthService } from './core/auth/auth.service';
 
 /** Stubs de los stores: evitan abrir SignalR/HTTP en tests del shell. */
 const fleetStub: Partial<FleetStore> = {
@@ -19,6 +20,14 @@ const alertStub: Partial<AlertStore> = {
   start: () => void 0,
 };
 
+/** Stub de auth en modo dev: el shell se muestra sin login y no toca Firebase/HTTP. */
+const authStub: Partial<AuthService> = {
+  mode: 'dev',
+  authenticated: signal(true),
+  role: signal('operador'),
+  error: signal(null),
+};
+
 describe('App', () => {
   beforeEach(async () => {
     await TestBed.configureTestingModule({
@@ -27,6 +36,7 @@ describe('App', () => {
         provideRouter(appRoutes),
         { provide: FleetStore, useValue: fleetStub },
         { provide: AlertStore, useValue: alertStub },
+        { provide: AuthService, useValue: authStub },
       ],
     }).compileComponents();
   });

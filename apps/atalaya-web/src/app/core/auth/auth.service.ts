@@ -1,7 +1,13 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
+import type { Auth, User } from 'firebase/auth';
 import { API_CONFIG } from '../api.config';
+import { AUTH_CONFIG, type AuthConfig } from './auth.config';
+
+// Firebase se importa de forma dinámica solo en modo `firebase`: lo mantiene fuera del bundle
+// inicial (dev/disabled no lo cargan) y fuera del grafo de Jest. Los tipos van por `import type`
+// (se borran en compilación, no disparan carga en runtime).
 
 interface DevTokenResponse {
   token: string;
@@ -10,53 +16,130 @@ interface DevTokenResponse {
 }
 
 /**
- * Auth de lecturas (AUD-015 D, SAD §6.1). En modo dev el backend expone `/auth/dev-token`, que
- * mintea un JWT con rol; aquí lo adquirimos de forma silenciosa al arrancar (auto-token) y lo
- * servimos al interceptor HTTP y al `accessTokenFactory` de SignalR. Sin pantalla de login: el
- * foco es demostrar la cadena de auth de extremo a extremo, no la UI de credenciales. En prod este
- * servicio se cambiaría por un flujo OIDC real (MSAL/oidc-client) sin tocar a sus consumidores.
+ * Auth del dashboard (AUD-019 + G3/AUD-023). Dos estrategias según `AUTH_CONFIG.mode`:
+ * - `dev`: adquiere un JWT HS256 de `/auth/dev-token` al arrancar (silencioso, sin login).
+ * - `firebase`: login real con Identity Platform; el ID token (y el rol por custom claim) salen
+ *   de Firebase Auth, que refresca el token solo. `disabled`: sin token (lecturas abiertas).
+ * Sirve el token al `authInterceptor` (REST) y al `accessTokenFactory` del hub, igual en ambos modos.
  */
 @Injectable({ providedIn: 'root' })
 export class AuthService {
   private readonly http = inject(HttpClient);
-  private readonly config = inject(API_CONFIG);
+  private readonly apiConfig = inject(API_CONFIG);
+  private readonly config = inject(AUTH_CONFIG);
 
   private token: string | null = null;
-  private expiresAt = 0;
+  private expiresAt = 0; // solo modo dev
+  private firebaseAuth?: Auth;
+  private user: User | null = null;
 
-  /** Rol del usuario actual (`null` si la auth está desactivada). Útil para gating de UI futuro. */
+  /** Rol del usuario (de `/auth/dev-token` o del custom claim de Firebase). */
   readonly role = signal<string | null>(null);
+  /** Hay sesión válida. En modo `disabled` es siempre true (no se exige login). */
+  readonly authenticated = signal(false);
+  /** Mensaje de error del último intento de login (para la UI). */
+  readonly error = signal<string | null>(null);
 
-  /** Lo invoca el APP_INITIALIZER: adquiere el token antes de que arranque la app. */
-  async initialize(): Promise<void> {
-    await this.refresh();
+  get mode(): AuthConfig['mode'] {
+    return this.config.mode;
   }
 
-  /** Token vigente para el interceptor HTTP (`null` = sin auth, no adjunta cabecera). */
+  /** Lo invoca el APP_INITIALIZER: deja el token listo (dev) o restaura la sesión (firebase). */
+  async initialize(): Promise<void> {
+    if (this.config.mode === 'firebase') {
+      await this.initFirebase();
+    } else if (this.config.mode === 'dev') {
+      await this.refreshDevToken();
+    } else {
+      this.authenticated.set(true); // disabled: sin auth, entra directo
+    }
+  }
+
+  /** Token vigente para el interceptor HTTP (sincrónico; `null` = sin token). */
   getToken(): string | null {
     return this.token;
   }
 
-  /** Para SignalR: refresca si está por expirar y devuelve el token (cadena vacía si no hay auth). */
+  /** Para SignalR y refrescos: devuelve el token vigente (refresca si hace falta). */
   async ensureToken(): Promise<string> {
-    if (!this.token || Date.now() > this.expiresAt - 30_000) await this.refresh();
+    if (this.config.mode === 'firebase') {
+      if (this.user) this.token = await this.user.getIdToken();
+      return this.token ?? '';
+    }
+    if (this.config.mode === 'dev') {
+      if (!this.token || Date.now() > this.expiresAt - 30_000) await this.refreshDevToken();
+    }
     return this.token ?? '';
   }
 
-  private async refresh(): Promise<void> {
+  /** Login con email/password (modo firebase). Lanza con un mensaje legible si falla. */
+  async signIn(email: string, password: string): Promise<void> {
+    if (!this.firebaseAuth) throw new Error('Firebase no está inicializado.');
+    this.error.set(null);
+    try {
+      const { signInWithEmailAndPassword } = await import('firebase/auth');
+      await signInWithEmailAndPassword(this.firebaseAuth, email, password);
+      // onIdTokenChanged actualiza token/role/authenticated.
+    } catch {
+      this.error.set('Credenciales inválidas.');
+      throw new Error('signin-failed');
+    }
+  }
+
+  async signOut(): Promise<void> {
+    if (!this.firebaseAuth) return;
+    const { signOut } = await import('firebase/auth');
+    await signOut(this.firebaseAuth);
+  }
+
+  private async initFirebase(): Promise<void> {
+    const firebaseConfig = this.config.firebase;
+    if (!firebaseConfig) throw new Error('Falta la config de Firebase en modo firebase.');
+
+    const { initializeApp } = await import('firebase/app');
+    const { getAuth, onIdTokenChanged } = await import('firebase/auth');
+    const auth = getAuth(initializeApp(firebaseConfig));
+    this.firebaseAuth = auth;
+
+    // Resuelve cuando Firebase entrega el primer estado (sesión restaurada o no).
+    await new Promise<void>((resolve) => {
+      let first = true;
+      onIdTokenChanged(auth, async (user) => {
+        this.user = user;
+        if (user) {
+          this.token = await user.getIdToken();
+          const result = await user.getIdTokenResult();
+          this.role.set((result.claims['role'] as string | undefined) ?? null);
+          this.authenticated.set(true);
+        } else {
+          this.token = null;
+          this.role.set(null);
+          this.authenticated.set(false);
+        }
+        if (first) {
+          first = false;
+          resolve();
+        }
+      });
+    });
+  }
+
+  private async refreshDevToken(): Promise<void> {
     try {
       const res = await firstValueFrom(
-        this.http.get<DevTokenResponse>(`${this.config.baseUrl}/auth/dev-token`, {
+        this.http.get<DevTokenResponse>(`${this.apiConfig.baseUrl}/auth/dev-token`, {
           params: { role: 'operador' },
         })
       );
       this.token = res.token;
       this.role.set(res.role);
       this.expiresAt = Date.now() + res.expiresIn * 1000;
+      this.authenticated.set(true);
     } catch {
-      // Auth:Disabled → `/auth/dev-token` no existe (404): seguimos sin token (lecturas abiertas).
+      // Auth:Disabled → /auth/dev-token no existe (404): seguimos sin token.
       this.token = null;
       this.role.set(null);
+      this.authenticated.set(false);
     }
   }
 }

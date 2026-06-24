@@ -29,7 +29,7 @@ que estresar.
 > - **Camino frío:** telemetría particionada por tiempo (retención por `DROP PARTITION`) + data lake S3 idempotente + vista histórica.
 > - **Productivización:** infra como **AWS CDK** (desplegada a LocalStack), push **por viewport**, **readiness** (`/health/ready`) y graceful shutdown, tests de integración con **Testcontainers**.
 >
-> Detalle por fase en [AUDIT.md](./AUDIT.md) (AUD-001…022; AUD-020 = decisión de pivote a GCP, AUD-021 = G1 Pub/Sub, AUD-022 = G2 Cloud Storage).
+> Detalle por fase en [AUDIT.md](./AUDIT.md) (AUD-001…023; AUD-020 = decisión de pivote a GCP · AUD-021 G1 Pub/Sub · AUD-022 G2 Cloud Storage · AUD-023 G3 Identity Platform).
 
 ---
 
@@ -85,7 +85,7 @@ Las decisiones están registradas como **ADRs** en el [SAD](./SAD-Atalaya.md#5-d
 | Mensajería | hoy **AWS SNS → SQS** · target **GCP Pub/Sub** ([ADR-013](./SAD-Atalaya.md)) |
 | Almacenamiento | SQL particionado (PostgreSQL → Cloud SQL) + data lake **S3 → Cloud Storage** |
 | Analítica | (Athena) → **BigQuery** |
-| Auth | JWT Bearer + RBAC · OIDC (Cognito) → **Identity Platform** |
+| Auth | JWT Bearer + RBAC · OIDC real con **Identity Platform** (login Firebase Auth) |
 | Infra | hoy **AWS CDK + LocalStack** · target **Terraform + Cloud Run** (emuladores en dev) |
 | Monorepo | Nx |
 | Observabilidad | OpenTelemetry, métricas RED |
@@ -194,7 +194,7 @@ Más detalle (modos, endpoints, rollback) en [DEPLOY.md](./DEPLOY.md).
 | **G0 — Fundaciones** | Proyecto GCP + **Budget+Alert** + APIs + service accounts | ⬜ |
 | **G1 — Mensajería Pub/Sub** | `PubSubBatchPublisher` + consumidor (flag `Telemetry:Transport=Gcp`), E2E contra el emulador | ✅ ([AUD-021](./AUDIT.md)) |
 | **G2 — Cloud Storage + camino frío** | `GcsRawEventArchive` (fake-gcs local) + Cloud SQL | ✅ ([AUD-022](./AUDIT.md)) |
-| **G3 — Auth Identity Platform** | `Auth:Mode=Oidc` real + login Angular (Firebase Auth) + roles por claims | ⬜ |
+| **G3 — Auth Identity Platform** | `Auth:Mode=Oidc` real + login Angular (Firebase Auth) + roles por claims | ✅ ([AUD-023](./AUDIT.md)) |
 | **G4 — BigQuery** | Data lake GCS → BigQuery (cierra Athena) | ⬜ |
 | **G5 — IaC + despliegue** | Terraform + **Cloud Run** (API+worker) + SPA a **Firebase Hosting** | ⬜ |
 | **G6 — Medición + teardown** | k6 contra Pub/Sub real + script de destrucción de recursos | ⬜ |

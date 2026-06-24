@@ -31,7 +31,8 @@ export class FleetStore {
   private readonly destroyRef = inject(DestroyRef);
 
   private readonly byId = new Map<string, DeviceState>();
-  private started = false;
+  private wired = false; // subscripciones al stream: una sola vez por vida de la app
+  private connected = false; // ciclo de conexión del hub (toggle con login/logout, G3)
   private appliedThisSecond = 0;
 
   /** Snapshot actual de la flota (read model en cliente). */
@@ -48,10 +49,33 @@ export class FleetStore {
   readonly status = this.stream.status;
   readonly live = computed(() => this.status() === HubConnectionState.Connected);
 
-  /** Idempotente: arranca snapshot + stream una sola vez (llamado desde el App root). */
+  /** Arranca el hub (idempotente). Cablea las subscripciones la primera vez; reconecta tras un stop. */
   async start(): Promise<void> {
-    if (this.started) return;
-    this.started = true;
+    this.wire();
+    if (this.connected) return;
+    this.connected = true;
+    await this.stream.connect();
+  }
+
+  /**
+   * Cierra el stream y limpia el estado en cliente (al cerrar sesión, G3). Las subscripciones
+   * quedan vivas pero ociosas (el stream no emite desconectado); un `start()` posterior reconecta
+   * sin re-subscribir.
+   */
+  async stop(): Promise<void> {
+    if (!this.connected) return;
+    this.connected = false;
+    await this.stream.disconnect();
+    this.byId.clear();
+    this.devices.set([]);
+    this.eventsPerSec.set(0);
+    this.latencies = [];
+  }
+
+  /** Cablea snapshot + stream + tick una sola vez (independiente del ciclo de conexión). */
+  private wire(): void {
+    if (this.wired) return;
+    this.wired = true;
 
     // Re-sincroniza el snapshot del read model en cada (re)conexión: cierra huecos tras
     // una caída sin necesidad de replay por evento (el read model ya es el estado actual).
@@ -76,8 +100,6 @@ export class FleetStore {
       this.latencies = [];
     }, 1000);
     this.destroyRef.onDestroy(() => clearInterval(tick));
-
-    await this.stream.connect();
   }
 
   /**

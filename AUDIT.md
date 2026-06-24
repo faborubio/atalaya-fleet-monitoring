@@ -36,6 +36,59 @@ proyecto.
 
 ---
 
+## AUD-023 — Pivote a GCP · G3: auth OIDC real con Identity Platform (2026-06-24)
+
+**Fase:** Pivote a GCP ([ADR-013](./SAD-Atalaya.md)), **fase G3** del roadmap de [AUD-020](#aud-020--decisión-pivote-de-nube-aws--gcp-2026-06-23). Primer servicio GCP **real** (no emulado).
+**Alcance:** `Auth:Mode=Oidc` validado contra **Identity Platform** real + **login Angular** (Firebase
+Auth) + **roles por custom claim**. Cierra el OIDC que AUD-019 dejó como swap de config.
+**Auditor:** Fabián Rubio + Claude
+
+### Qué se hizo
+
+- **Backend (config, no código nuevo):** el modo Oidc de AUD-019 ya validaba JWT contra un
+  authority/JWKS. Se añadió `Auth:ProjectId` que **deriva** `EffectiveAuthority`
+  (`https://securetoken.google.com/{projectId}`) y `EffectiveAudience` (`projectId`). El rol viaja
+  como **custom claim `role`** (RBAC operador/admin ya existente).
+- **Frontend:** `AuthService` con dos estrategias por `AUTH_CONFIG.mode` (`dev` token silencioso /
+  `firebase` login real / `disabled`). Componente `Login` (email+password). **Firebase se importa de
+  forma dinámica** solo en modo firebase → fuera del bundle inicial (98.9 kB gzip, < NFR 250) y fuera
+  del grafo de Jest. El ID token y el rol (custom claim) salen de Firebase, que refresca el token solo.
+- **Custom claims:** script `scripts/set-role.mjs` (firebase-admin) que asigna `role`; acepta la ruta
+  de una service account key (sin depender de gcloud). No hay UI de consola para esto.
+- **Proyecto real:** `fabian-portafolio` (Identity Platform). El `apiKey` web es un identificador
+  **público** del proyecto (no secreto) → puede vivir en el cliente/repo.
+
+### Hallazgos
+
+| Sev | Hallazgo | Acción | Estado |
+|-----|----------|--------|--------|
+| 🟢  | OIDC real swap por config (ADR-011/AUD-019): solo `Auth:ProjectId` + login Firebase | `EffectiveAuthority/Audience` derivados del projectId | Resuelto |
+| 🟠  | **Ciclo auth↔stream (revisión crítica G3):** `signOut()` no cerraba el WebSocket del hub → la telemetría seguía fluyendo a una sesión deslogueada; los `started` impedían re-login limpio | `disconnect()` en `TelemetryStreamService` + `stop()` en `FleetStore`/`AlertStore`; el `App` ata start/stop al estado de sesión (cablea una vez, conecta/desconecta por login/logout) | Resuelto |
+| 🔵  | Interceptor REST usa token cacheado; SignalR no refresca token en conexión abierta >1h | Firebase auto-refresca (`onIdTokenChanged`); al reconectar `ensureToken`→`getIdToken`. Estándar | Aceptado |
+
+### Verificaciones
+
+- [x] `dotnet build Atalaya.sln` + `nx test api-tests` **42/42**; frontend `lint+test+build` ✅ (bundle
+      inicial 98.9 kB gzip; firebase en chunks lazy).
+- [x] **E2E contra Identity Platform REAL** (`fabian-portafolio`, API en `Auth:Mode=Oidc`,
+      `Auth:ProjectId=fabian-portafolio`): discovery + JWKS del issuer alcanzables; se creó un test
+      user real y se minteó un ID token de Google. Resultados sobre `/api/devices`:
+      **401** sin token · **401** firma inválida · **403** token válido **sin** rol · **200** token
+      válido con `role=operador` (claim inspeccionado en el JWT: `iss/aud=fabian-portafolio`).
+- [x] Fix de ciclo de vida: build/lint/test verdes; la lógica desmonta el hub al `signOut` y reconecta
+      con token fresco al re-login (smoke test interactivo en navegador pendiente del usuario).
+
+### Conclusión
+
+Primer servicio GCP **real** integrado: la auth de lecturas valida tokens de Identity Platform de
+verdad (no emulado), con login real en el dashboard y RBAC por custom claim. La revisión crítica cerró
+un gap de ciclo de sesión (WebSocket vivo tras logout). Queda **G4** (BigQuery sobre el data lake) y el
+despliegue real (G5: Cloud Run + Terraform + swap de configs a producción).
+
+**Veredicto:** ✅ G3 cerrada y verificada E2E contra Identity Platform real (incluida la revisión crítica).
+
+---
+
 ## AUD-022 — Pivote a GCP · G2: data lake en Cloud Storage (2026-06-24)
 
 **Fase:** Pivote a GCP ([ADR-013](./SAD-Atalaya.md)), **fase G2** del roadmap de [AUD-020](#aud-020--decisión-pivote-de-nube-aws--gcp-2026-06-23).
@@ -184,7 +237,7 @@ implementación**: a esta fecha **nada está migrado**; el sistema sigue corrien
 | **G0** | Fundaciones: ADR-013 + docs · proyecto GCP · **Budget+Alert** (tope) · habilitar APIs · service accounts | $0 | ⬜ (docs ✅) |
 | **G1** | Mensajería **Pub/Sub**: `PubSubBatchPublisher` + consumidor en worker, tras el flag; E2E contra el **emulador** | $0 | ✅ ([AUD-021](#aud-021--pivote-a-gcp--g1-mensajería-pubsub-tras-el-flag-2026-06-23)) |
 | **G2** | **GCS** + camino frío: `GcsRawEventArchive` (fake-gcs local) · Cloud SQL = solo connection string | $0 | ✅ ([AUD-022](#aud-022--pivote-a-gcp--g2-data-lake-en-cloud-storage-2026-06-24)) |
-| **G3** | **Auth Identity Platform**: `Auth:Mode=Oidc` real · login en Angular (Firebase Auth) · roles por custom claims | ~$0 | ⬜ |
+| **G3** | **Auth Identity Platform**: `Auth:Mode=Oidc` real · login en Angular (Firebase Auth) · roles por custom claims | ~$0 | ✅ ([AUD-023](#aud-023--pivote-a-gcp--g3-auth-oidc-real-con-identity-platform-2026-06-24)) |
 | **G4** | **BigQuery**: data lake GCS → BigQuery (external/load) · consultas analíticas (cierra Athena) | bajo | ⬜ |
 | **G5** | **IaC Terraform** + despliegue **Cloud Run** (API+worker) + SPA a **Firebase Hosting** | medio | ⬜ |
 | **G6** | Medición real: k6 contra Pub/Sub **real** · latencia/throughput de verdad · script de **teardown** | bajo | ⬜ |

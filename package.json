@@ -1,7 +1,7 @@
 {
   "name": "atalaya",
   "version": "0.0.0",
-  "description": "Plataforma de monitoreo y alertamiento de flota/IoT en tiempo real (Angular + .NET + AWS event-driven)",
+  "description": "Plataforma de monitoreo y alertamiento de flota/IoT en tiempo real (Angular + .NET + GCP event-driven)",
   "license": "MIT",
   "scripts": {
     "start": "nx serve atalaya-web",
@@ -21,10 +21,12 @@
     "@angular/platform-browser-dynamic": "~20.3.0",
     "@angular/router": "~20.3.0",
     "@microsoft/signalr": "^10.0.0",
+    "firebase": "^11.0.0",
     "rxjs": "~7.8.0",
     "zone.js": "~0.15.0"
   },
   "devDependencies": {
+    "firebase-admin": "^13.0.0",
     "@angular-devkit/core": "~20.3.0",
     "@angular-devkit/schematics": "~20.3.0",
     "@angular/build": "~20.3.0",

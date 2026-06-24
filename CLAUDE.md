@@ -62,7 +62,8 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
 ([AUD-018](./AUDIT.md)) + **Fase 3 seguridad: auth de lecturas OIDC/JWT** ([AUD-019](./AUDIT.md)).
 **El producto (en AWS/LocalStack) está completo.** **Pivote a GCP en marcha** ([AUD-020](./AUDIT.md),
 roadmap G0…G6): **G1 (Pub/Sub)** ([AUD-021](./AUDIT.md)) y **G2 (data lake en Cloud Storage)**
-([AUD-022](./AUDIT.md)) hechos y verificados E2E contra emuladores. Lo siguiente: G3 (Identity Platform).
+([AUD-022](./AUDIT.md)) verificados contra emuladores, y **G3 (auth OIDC real con Identity Platform)**
+([AUD-023](./AUDIT.md)) verificado contra el proyecto **real `fabian-portafolio`**. Lo siguiente: G4 (BigQuery).
 
 ### Hecho
 - ✅ SAD v1.0.1 (ADR-001…011) + docs base. Repo en GitHub (12+ commits).
@@ -167,6 +168,15 @@ cero pérdida (59.200/59.200). Deuda menor: reintento/persistencia ante `Publish
   un fallo posterior (p.ej. subida a GCS) + redelivery filtraba el evento como duplicado → hueco
   permanente en el data lake. Seguro porque todos los efectos son idempotentes (guard `seq`, clave por
   hash, máquina de incidentes). Aplica a ambos brokers (SQS y Pub/Sub).
+- **Auth OIDC real G3 (AUD-023, ADR-013)**: backend `Auth:ProjectId` deriva `EffectiveAuthority`
+  (`securetoken.google.com/{projectId}`) y `EffectiveAudience` (projectId); valida tokens de Identity
+  Platform contra el JWKS real; rol por custom claim `role`. Frontend `AuthService` con modo (`AUTH_CONFIG`):
+  `dev` (token silencioso `/auth/dev-token`) · `firebase` (login real, firebase **dynamic-import** → fuera
+  del bundle inicial y de Jest) · `disabled`. Componente `Login`; el `App` ata el stream al estado de
+  sesión (start al autenticar, **stop+disconnect al cerrar sesión** — fix de revisión crítica). Custom
+  claims con `scripts/set-role.mjs` (firebase-admin, acepta ruta de service account key, sin gcloud).
+  Proyecto real **fabian-portafolio**; `apiKey` web es público. Default del dashboard = `dev`
+  (`useFirebaseAuth` en `app.config.ts` lo cambia a firebase). Tests fuerzan auth desactivada/stub.
 - Interfaces de extensión (para swaps sin reescribir): `ITelemetryPublisher`, `IDeviceStateRepository`,
   `IAlertIncidentStore`, `ITelemetryArchive`, `IRawEventArchive`, `IEventDeduplicator`,
   `ITelemetryBroadcaster`, `IAlertBroadcaster`.
@@ -269,7 +279,10 @@ Para retomar, leer §1 (banner de pivote) + §5 + [AUD-020](./AUDIT.md) (roadmap
 2. **G2 — GCS + camino frío** ✅ **HECHO** ([AUD-022](./AUDIT.md)): `GcsRawEventArchive` (reusa
    `RawEventKey`) contra fake-gcs; `StorageClient` con `BaseUri`+`UnauthenticatedAccess` en emulador.
    Verificado E2E. Cloud SQL = connection string (sin código, G5).
-3. **G3 — Auth Identity Platform**: `Auth:Mode=Oidc` real + login Angular (Firebase Auth) + roles por claims.
+3. **G3 — Auth Identity Platform** ✅ **HECHO** ([AUD-023](./AUDIT.md)): `Auth:ProjectId` deriva el
+   authority/audience de Identity Platform; login real Angular (Firebase Auth, dynamic-import);
+   roles por custom claim (`scripts/set-role.mjs`). Verificado E2E contra `fabian-portafolio`
+   (401/403/200). Proyecto real: **fabian-portafolio**; test user `atalaya-test@atalaya.dev`.
 4. **G4 — BigQuery**: data lake GCS → BigQuery (cierra Athena).
 5. **G5 — IaC Terraform + despliegue Cloud Run** (API+worker) + SPA a Firebase Hosting.
 6. **G6 — Medición real** (k6 contra Pub/Sub real) + **script de teardown** (apagar Cloud SQL/Memorystore).

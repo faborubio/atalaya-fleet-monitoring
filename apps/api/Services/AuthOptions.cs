@@ -15,6 +15,13 @@ public sealed class AuthOptions
     /// <summary>Authority OIDC (modo Oidc): de aquí se descubre el JWKS para validar firmas.</summary>
     public string? Authority { get; set; }
 
+    /// <summary>
+    /// Proyecto de Identity Platform / Firebase (modo Oidc). Si se fija, deriva el Authority
+    /// (<c>https://securetoken.google.com/{projectId}</c>) y la Audience (<c>projectId</c>) sin
+    /// configurarlos a mano. Swap a otro IdP = poner Authority/Audience explícitos en su lugar.
+    /// </summary>
+    public string? ProjectId { get; set; }
+
     /// <summary>Audience esperada en el token (claim <c>aud</c>).</summary>
     public string Audience { get; set; } = "atalaya";
 
@@ -30,4 +37,14 @@ public sealed class AuthOptions
     public bool IsEnabled => !Mode.Equals("Disabled", StringComparison.OrdinalIgnoreCase);
     public bool IsDev => Mode.Equals("Dev", StringComparison.OrdinalIgnoreCase);
     public bool IsOidc => Mode.Equals("Oidc", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Authority efectivo: el explícito, o el de Identity Platform derivado del ProjectId.</summary>
+    public string? EffectiveAuthority =>
+        !string.IsNullOrWhiteSpace(Authority) ? Authority
+        : !string.IsNullOrWhiteSpace(ProjectId) ? $"https://securetoken.google.com/{ProjectId}"
+        : null;
+
+    /// <summary>Audience efectiva: en Identity Platform es el ProjectId; si no, la Audience explícita.</summary>
+    public string EffectiveAudience =>
+        !string.IsNullOrWhiteSpace(ProjectId) ? ProjectId! : Audience;
 }

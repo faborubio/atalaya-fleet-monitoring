@@ -39,6 +39,10 @@ yarn-error.log*
 !.env.example
 *.pem
 aws.credentials
+# GCP / Firebase service account keys (G3) — NUNCA subir
+*serviceAccount*.json
+*-firebase-adminsdk-*.json
+gcp-key*.json
 
 # Editores / SO
 .vscode/*

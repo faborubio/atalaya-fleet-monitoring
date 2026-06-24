@@ -48,6 +48,16 @@ export class AlertStore {
       .subscribe((batch) => this.apply(batch));
   }
 
+  /**
+   * Limpia los incidentes mostrados al cerrar sesión (G3). No desengancha las subscripciones
+   * (quedan ociosas mientras el stream esté desconectado); al reconectar, `connected$` recarga
+   * el snapshot. La conexión del hub la gobierna el FleetStore.
+   */
+  stop(): void {
+    this.byId.clear();
+    this.incidents.set([]);
+  }
+
   private loadSnapshot(): void {
     this.http
       .get<AlertIncident[]>(`${this.config.baseUrl}/api/alerts`)

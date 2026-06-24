@@ -308,7 +308,9 @@ atalaya/
 
 **Estado:** Fases 0→3 completas en AWS/LocalStack + **pivote a GCP G1/G2/G3/G4 verificados E2E** +
 **G5a (IaC Terraform) escrito y validado** ([AUD-021](./AUDIT.md)…[AUD-025](./AUDIT.md)). Último commit:
-**G4** (`e0d2d7e`, BigQuery). **Siguiente: G5b (apply real + E2E en la nube + teardown).** Para retomar,
+**G5a** (`11b8b9c`). **G5b (apply real con costo) se DEJA PARA EL FINAL por decisión** — primero el
+backlog sin costo (features/endurecimiento); el despliegue vivo + medición + teardown se hacen al cierre.
+Para retomar,
 leer §1 (banner de pivote) + §5 + [AUD-020](./AUDIT.md) (roadmap) + los últimos audits
 [AUD-024](./AUDIT.md)/[AUD-025](./AUDIT.md) + `infra/terraform/README.md` (runbook de G5b).
 
@@ -352,7 +354,7 @@ Identity Platform; dashboard en modo firebase = `useFirebaseAuth=true` en `app.c
      CDK) + Dockerfiles api/worker + container-readiness (worker health en `$PORT`, CORS por `Cors:Origins`).
      `terraform validate` ✅ + imágenes que construyen ($0). Worker = **pull + min-instances=1** (decisión).
      Cierra el gap de IAM de la DLQ de Pub/Sub (G1).
-   - **G5b** (SIGUIENTE): `terraform apply` real (crear bucket de tfstate → init con backend → publicar
+   - **G5b** (DIFERIDO AL FINAL por decisión, 2026-06-24): `terraform apply` real (crear bucket de tfstate → init con backend → publicar
      imágenes en Artifact Registry → apply) + **`firebase deploy`** de la SPA + **smoke E2E en la nube**
      + **teardown**. Runbook en `infra/terraform/README.md`. ⚠️ Cobra (~US$70–120/mes encendido):
      ventana acotada + Budget+Alert + `terraform destroy` al terminar.

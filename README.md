@@ -11,7 +11,7 @@ que estresar.
 | | |
 |---|---|
 | **Versión** | 0.3.0 |
-| **Estado** | 🟢 Fases 0→3 completas (en AWS/LocalStack) — verificado E2E · 🔵 **pivote a GCP** decidido, en migración ([ADR-013](./SAD-Atalaya.md)) |
+| **Estado** | 🟢 Fases 0→3 (AWS/LocalStack) + **pivote a GCP G1–G4** + **IaC G5a** + backlog completo — todo verificado E2E ([ADR-013](./SAD-Atalaya.md)). Pendiente: **G5b** (despliegue real con costo, diferido) |
 | **Autor** | Fabián Rubio — Full Stack (foco Frontend / Angular) |
 | **Repositorio** | https://github.com/faborubio/atalaya-fleet-monitoring |
 | **Documento rector** | [SAD-Atalaya.md](./SAD-Atalaya.md) |
@@ -191,17 +191,19 @@ Más detalle (modos, endpoints, rollback) en [DEPLOY.md](./DEPLOY.md).
 
 | Fase | Alcance | Estado |
 |---|---|---|
-| **G0 — Fundaciones** | Proyecto GCP + **Budget+Alert** + APIs + service accounts | ⬜ |
+| **G0 — Fundaciones** | Proyecto GCP `fabian-portafolio` + **Budget+Alert** + APIs habilitadas | ✅ |
 | **G1 — Mensajería Pub/Sub** | `PubSubBatchPublisher` + consumidor (flag `Telemetry:Transport=Gcp`), E2E contra el emulador | ✅ ([AUD-021](./AUDIT.md)) |
 | **G2 — Cloud Storage + camino frío** | `GcsRawEventArchive` (fake-gcs local) + Cloud SQL | ✅ ([AUD-022](./AUDIT.md)) |
 | **G3 — Auth Identity Platform** | `Auth:Mode=Oidc` real + login Angular (Firebase Auth) + roles por claims | ✅ ([AUD-023](./AUDIT.md)) |
-| **G4 — BigQuery** | Data lake GCS → BigQuery (cierra Athena) | ⬜ |
-| **G5 — IaC + despliegue** | Terraform + **Cloud Run** (API+worker) + SPA a **Firebase Hosting** | ⬜ |
+| **G4 — BigQuery** | Data lake GCS → BigQuery (cierra Athena) + endpoint `/api/analytics` | ✅ ([AUD-024](./AUDIT.md)) |
+| **G5a — IaC** | **Terraform** completo + Dockerfiles api/worker (`validate` ✅, imágenes ✅) | ✅ ([AUD-025](./AUDIT.md)) |
+| **G5b — despliegue real** | `apply` (Cloud Run + Cloud SQL + Memorystore) + Firebase Hosting + teardown | ⬜ *(diferido; prep hecha)* |
 | **G6 — Medición + teardown** | k6 contra Pub/Sub real + script de destrucción de recursos | ⬜ |
-| **Backlog (aplica en GCP)** | DLQ replay, downsampling, virtual scroll + mapa real (deck.gl), login real/refresh | ⬜ ([AUD-015](./AUDIT.md)) |
+| **Backlog (de [AUD-015](./AUDIT.md))** | mapa deck.gl + virtual scroll · DLQ replay · downsampling · runbooks · refresh-token | ✅ ([AUD-026](./AUDIT.md)…[AUD-030](./AUDIT.md)) |
 
-Cada fase entrega algo demostrable y medido. Ver detalle en el
-[SAD §13](./SAD-Atalaya.md#13-roadmap-por-fases) y la revisión crítica [AUD-015](./AUDIT.md).
+Cada fase entrega algo demostrable y medido. **Estado real:** G1–G4 + G5a + backlog completo y verificado
+E2E; **solo queda G5b** (el `apply` con costo, diferido por decisión). Ver detalle en el
+[SAD §13](./SAD-Atalaya.md#13-roadmap-por-fases) y la bitácora [AUDIT.md](./AUDIT.md).
 
 ---
 

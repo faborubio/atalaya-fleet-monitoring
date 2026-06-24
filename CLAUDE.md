@@ -55,7 +55,7 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
 
 ## 5. Estado actual
 
-**Fecha de actualización:** 2026-06-24
+**Fecha de actualización:** 2026-06-24 (cierre del backlog AWS-era; solo queda G5b)
 **Fase:** 1 + 1.5 + ingesta desacoplada ([AUD-010](./AUDIT.md)) + **Fase 2 completa** (alertas
 [AUD-011](./AUDIT.md) + camino frío [AUD-012](./AUDIT.md)) + **productivización** (CDK
 [AUD-013](./AUDIT.md) + viewport [AUD-014](./AUDIT.md)) + **Fase 2.5 calidad de datos**
@@ -66,8 +66,14 @@ roadmap G0…G6): **G1 (Pub/Sub)** ([AUD-021](./AUDIT.md)) y **G2 (data lake en 
 ([AUD-022](./AUDIT.md)) verificados contra emuladores; **G3 (auth OIDC real con Identity Platform)**
 ([AUD-023](./AUDIT.md)) y **G4 (analítica con BigQuery sobre el data lake)** ([AUD-024](./AUDIT.md))
 verificados contra el proyecto **real `fabian-portafolio`**. **G5a (IaC con Terraform + Dockerfiles)**
-([AUD-025](./AUDIT.md)) escrito y validado (`terraform validate` + imágenes que construyen, $0).
-Lo siguiente: **G5b** (apply real + E2E en la nube + teardown).
+([AUD-025](./AUDIT.md)) escrito y validado. **Backlog AWS-era COMPLETO**: mapa deck.gl + virtual scroll
+([AUD-026](./AUDIT.md)), DLQ replay ([AUD-027](./AUDIT.md)), downsampling del histórico
+([AUD-028](./AUDIT.md)), runbooks ([AUD-029](./AUDIT.md)), refresh-token ([AUD-030](./AUDIT.md)) — todos
+verificados E2E. **No quedan ítems de features.** **Lo único pendiente es G5b** (el `terraform apply`
+real, con costo): la **prep ya está hecha** (billing+Budget, ADC del usuario como Owner, bucket de
+tfstate `gs://atalaya-tfstate`, imágenes `api:v1`/`worker:v1` en Artifact Registry, config de prod del
+frontend cableada). Falta: `terraform apply` → rellenar `PROD_API_BASE_URL`+`cors_origins` → `firebase
+deploy` → smoke E2E en la nube → `terraform destroy`. Runbook en `infra/terraform/README.md`.
 
 ### Hecho
 - ✅ SAD v1.0.1 (ADR-001…011) + docs base. Repo en GitHub (12+ commits).
@@ -242,8 +248,8 @@ docker compose -f infra/docker-compose.yml up -d redis postgres pubsub-emulator 
 $env:Telemetry__Transport="Gcp"; npx nx serve api      # publica al emulador Pub/Sub
 $env:Telemetry__Transport="Gcp"; npx nx serve worker   # consume Pub/Sub + archiva en GCS (fake-gcs)
 ```
-Verificación: `npx nx run-many -t build lint test` · `nx test api-tests` (**43/43** con Docker;
-**40 + 3 saltados** sin Docker, por los tests de Testcontainers). Health: `curl :3000/health/ready`
+Verificación: `npx nx run-many -t build lint test` · `nx test api-tests` (**44/44** con Docker;
+**41 + 3 saltados** sin Docker, por los tests de Testcontainers). Health: `curl :3000/health/ready`
 y `:3100/health/ready` (worker). Carga: ver [DEPLOY.md §1.6](./DEPLOY.md) (k6 vía Docker).
 Analítica (G4, BigQuery real): `node scripts/bigquery-setup.mjs fabian-portafolio atalaya-datalake
 atalaya_analytics <sa-key.json>` y, con la API en modo Gcp + `Gcp__DatasetId=atalaya_analytics` +
@@ -252,24 +258,17 @@ Auth (modo Dev en Development): `curl :3000/auth/dev-token?role=operador` → JW
 adquiere solo. Lecturas sin token → 401; con rol operador/admin → 200.
 
 ### Pendiente (próxima sesión)
-**No quedan fases de features** — el producto (mapa, dispositivos, alertas-incidentes, históricos)
-está completo y verificado E2E. Lo que resta es **endurecimiento incremental** y **solo-AWS-real**:
+**No quedan ítems de features ni de backlog** — el producto está completo y verificado E2E. **Lo único
+pendiente es G5b** (el `terraform apply` real, ventana de costo diferida por decisión). La prep de G5b ya
+está hecha (ver §5 párrafo de estado y §7 roadmap G5). Para retomar G5b: `infra/terraform/README.md` (runbook).
 
-- ✅ **Mapa real (deck.gl) + virtual scroll (CDK)** hechos ([AUD-026](./AUDIT.md)): dashboard con basemap
-  OSM + `ScatterplotLayer` geolocalizado (deck.gl dynamic-import, fuera del bundle inicial); tabla de
-  dispositivos con `cdk-virtual-scroll-viewport` (sin cap). Verificado E2E en navegador real.
-- ✅ **DLQ replay** hecho ([AUD-027](./AUDIT.md)): `POST /api/admin/dlq/replay` (modo Gcp, RBAC admin)
-  re-encola los dead-letters al topic principal. Verificado E2E contra el emulador.
-- ✅ **Downsampling del histórico** hecho ([AUD-028](./AUDIT.md)): `ITelemetryArchive.QueryDownsampledAsync`
-  + `GET /api/history/series?deviceId&minutes&buckets` (agrega en ~N puntos, promedio por intervalo; rango
-  hasta 7 días). Frontend del histórico usa la serie agregada (rangos 6h/24h). Verificado E2E.
-- ✅ **Runbooks operativos** hechos ([RUNBOOKS.md](./RUNBOOKS.md), [AUD-029](./AUDIT.md)): caídas de
-  deps, replay de DLQ, retención, deploy/apagado ordenado, control de costo/teardown.
-- ✅ **Refresh-token** hecho ([AUD-030](./AUDIT.md)): interceptor REST usa `ensureToken()` (token fresco)
-  + hub reconecta proactivamente antes de expirar (`getTokenExpiry`). Verificado E2E (token de 1 min → 3
-  emisiones, 0× 401). Login Firebase real ya estaba (G3). **No quedan ítems de features**; solo G5b.
-- **Solo AWS real** (requiere cuenta, hoy bloqueado): **Athena** sobre el data lake S3 · medir
-  throughput contra AWS · CDK multi-entorno (dev/staging/prod).
+Backlog AWS-era **todo cerrado** (referencia rápida):
+- ✅ Mapa deck.gl + virtual scroll ([AUD-026](./AUDIT.md)) · ✅ DLQ replay ([AUD-027](./AUDIT.md)) ·
+  ✅ Downsampling del histórico ([AUD-028](./AUDIT.md)) · ✅ Runbooks ([RUNBOOKS.md](./RUNBOOKS.md),
+  [AUD-029](./AUDIT.md)) · ✅ Refresh-token ([AUD-030](./AUDIT.md)).
+
+- **Solo AWS real** (opcional, requiere cuenta AWS, hoy bloqueado): **Athena** sobre el data lake S3 ·
+  medir throughput contra AWS · CDK multi-entorno. No es necesario para cerrar el proyecto (el target es GCP).
 - **Deuda menor anotada**: durabilidad del borde de ingesta = best-effort (drena al apagar, pero
   el 202 es previo a durabilidad → real: API GW→SNS, AUD-015 B) · reintento ante `PublishBatch`
   fallido (AUD-010) · caché de incidentes abiertos coherente solo en 1 worker (FIFO si hay varias
@@ -326,12 +325,12 @@ atalaya/
 ## 7. Próximos pasos sugeridos (para la nueva sesión)
 
 **Estado:** Fases 0→3 completas en AWS/LocalStack + **pivote a GCP G1/G2/G3/G4 verificados E2E** +
-**G5a (IaC Terraform) escrito y validado** ([AUD-021](./AUDIT.md)…[AUD-025](./AUDIT.md)). Último commit:
-**G5a** (`11b8b9c`). **G5b (apply real con costo) se DEJA PARA EL FINAL por decisión** — primero el
-backlog sin costo (features/endurecimiento); el despliegue vivo + medición + teardown se hacen al cierre.
-Para retomar,
-leer §1 (banner de pivote) + §5 + [AUD-020](./AUDIT.md) (roadmap) + los últimos audits
-[AUD-024](./AUDIT.md)/[AUD-025](./AUDIT.md) + `infra/terraform/README.md` (runbook de G5b).
+**G5a (IaC Terraform) validado** + **backlog AWS-era COMPLETO** ([AUD-021](./AUDIT.md)…[AUD-030](./AUDIT.md)).
+Último commit: **refresh-token** (`ebe51fc`, AUD-030). **No quedan features.** **Lo único pendiente es G5b**
+(el `terraform apply` real, ventana de costo diferida por decisión): la prep ya está hecha (billing+Budget,
+ADC Owner, bucket de tfstate, imágenes en Artifact Registry, config prod del frontend) — ver §7 roadmap G5.
+Para retomar, leer §1 (banner de pivote) + §5 + [AUD-020](./AUDIT.md) (roadmap) + `infra/terraform/README.md`
+(runbook de G5b).
 
 > **Flujo por fase G (acordado, [memoria] `gcp-phase-workflow`):** implementar → **verificar E2E real**
 > (no solo build/tests) → **revisión crítica** → aplicar el fix que surja → documentar en los .md →
@@ -373,17 +372,23 @@ Identity Platform; dashboard en modo firebase = `useFirebaseAuth=true` en `app.c
      CDK) + Dockerfiles api/worker + container-readiness (worker health en `$PORT`, CORS por `Cors:Origins`).
      `terraform validate` ✅ + imágenes que construyen ($0). Worker = **pull + min-instances=1** (decisión).
      Cierra el gap de IAM de la DLQ de Pub/Sub (G1).
-   - **G5b** (DIFERIDO AL FINAL por decisión, 2026-06-24): `terraform apply` real (crear bucket de tfstate → init con backend → publicar
-     imágenes en Artifact Registry → apply) + **`firebase deploy`** de la SPA + **smoke E2E en la nube**
-     + **teardown**. Runbook en `infra/terraform/README.md`. ⚠️ Cobra (~US$70–120/mes encendido):
-     ventana acotada + Budget+Alert + `terraform destroy` al terminar.
+   - **G5b** (DIFERIDO AL FINAL por decisión, 2026-06-24). **Prep ya HECHA (sin costo):** billing+Budget ·
+     ADC del usuario como Owner (`gcloud auth application-default login`) · bucket de tfstate
+     `gs://atalaya-tfstate` (versionado) · `terraform init` con backend GCS + `apply -target` del Artifact
+     Registry (+ APIs) · imágenes `api:v1`/`worker:v1` **publicadas** en `us-central1-docker.pkg.dev/
+     fabian-portafolio/atalaya` · `prodApiConfig` del frontend cableado por `isDevMode()`. `terraform.tfvars`
+     (project_id/imágenes) existe local (gitignored). **Falta solo (con costo):** `terraform apply` completo
+     (Cloud SQL+Memorystore+Cloud Run) → rellenar `PROD_API_BASE_URL` (output `api_url`) + `cors_origins`
+     (dominio de Hosting) → `nx build atalaya-web` + `firebase deploy --only hosting` (poner
+     `useFirebaseAuth=true`) → smoke E2E → **`terraform destroy`**. Runbook en `infra/terraform/README.md`.
+     ⚠️ ~US$70–120/mes encendido → ventana acotada + teardown. [memoria] `g5b-deploy-readiness`.
 6. **G6 — Medición real** (k6 contra Pub/Sub real) + **script de teardown** (apagar Cloud SQL/Memorystore).
 
 ⚠️ **Costo**: BigQuery pay-per-byte (free-tier cubre dev); Cloud SQL/Memorystore cobran ociosos →
 Budget+Alert + teardown obligatorios.
-Backlog AWS-era de [AUD-015](./AUDIT.md): **todo hecho** (downsampling ✅ AUD-028 · refresh-token ✅ AUD-030 ·
-DLQ replay ✅ AUD-027 · mapa deck.gl + virtual scroll ✅ AUD-026). Solo queda el despliegue real **G5b**.
-(Mapa real deck.gl + virtual scroll ✅ [AUD-026](./AUDIT.md); DLQ replay ✅ [AUD-027](./AUDIT.md).)
+Backlog AWS-era de [AUD-015](./AUDIT.md): **todo hecho** (mapa deck.gl + virtual scroll ✅ AUD-026 ·
+DLQ replay ✅ AUD-027 · downsampling ✅ AUD-028 · runbooks ✅ AUD-029 · refresh-token ✅ AUD-030).
+**Solo queda el despliegue real G5b** (prep hecha; ver §7 roadmap G5).
 
 > Al cerrar cada sesión: actualiza §5 (estado), añade entrada en AUDIT.md si hubo cambio
 > auditable, y registra en TROUBLESHOOTING.md cualquier error resuelto.

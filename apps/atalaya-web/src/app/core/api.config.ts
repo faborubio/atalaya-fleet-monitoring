@@ -15,3 +15,15 @@ export const devApiConfig: ApiConfig = {
   baseUrl: 'http://localhost:3000',
   hubUrl: 'http://localhost:3000/hubs/telemetry',
 };
+
+/**
+ * Producción (G5b): la API corre en **Cloud Run**. Su URL solo se conoce tras el `terraform apply`
+ * (output `api_url`). **Rellena `PROD_API_BASE_URL` con esa URL antes del `nx build` de producción +
+ * `firebase deploy`** (y recuerda añadir el dominio de Hosting a `cors_origins` en Terraform).
+ * La selección dev/prod la hace `app.config.ts` por `isDevMode()`.
+ */
+const PROD_API_BASE_URL = 'https://REEMPLAZAR-con-api_url-de-cloud-run.run.app';
+export const prodApiConfig: ApiConfig = {
+  baseUrl: PROD_API_BASE_URL,
+  hubUrl: `${PROD_API_BASE_URL}/hubs/telemetry`,
+};

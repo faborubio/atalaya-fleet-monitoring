@@ -52,9 +52,20 @@ docker push <repo>/api:v1 ; docker push <repo>/worker:v1
 terraform plan  -var="api_image=<repo>/api:v1" -var="worker_image=<repo>/worker:v1"
 terraform apply -var="api_image=<repo>/api:v1" -var="worker_image=<repo>/worker:v1"
 
-# 4) SPA → Firebase Hosting (build de Angular apuntando al api_url del output):
-#    firebase deploy --only hosting
+# 4) SPA → Firebase Hosting:
+#    - Rellena PROD_API_BASE_URL en apps/atalaya-web/src/app/core/api.config.ts con el output api_url.
+#    - Añade ese dominio de Hosting a cors_origins (terraform.tfvars) y re-aplica para que la API lo acepte.
+#    - Activa login real: useFirebaseAuth = true en apps/atalaya-web/src/app/app.config.ts.
+#    nx build atalaya-web && firebase deploy --only hosting
 ```
+
+## Estado de preparación (G5a → G5b)
+
+Hecho sin costo (vía ADC del usuario): bucket de estado `gs://atalaya-tfstate` (versionado) ·
+`terraform apply -target` del **Artifact Registry** + APIs habilitadas · imágenes **`api:v1`/`worker:v1`
+publicadas** en `us-central1-docker.pkg.dev/fabian-portafolio/atalaya` · `prodApiConfig` del frontend
+listo (falta rellenar la URL). **Falta solo el `terraform apply` completo (con costo) + `firebase deploy`
++ smoke + teardown.**
 
 ## Costo y teardown (⚠️ obligatorio)
 

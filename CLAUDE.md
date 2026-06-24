@@ -259,8 +259,11 @@ está completo y verificado E2E. Lo que resta es **endurecimiento incremental** 
   dispositivos con `cdk-virtual-scroll-viewport` (sin cap). Verificado E2E en navegador real.
 - ✅ **DLQ replay** hecho ([AUD-027](./AUDIT.md)): `POST /api/admin/dlq/replay` (modo Gcp, RBAC admin)
   re-encola los dead-letters al topic principal. Verificado E2E contra el emulador.
-- **Fase 3 — resto** (SAD §10, local, sin urgencia): downsampling del histórico · runbooks ·
-  login real/refresh-token (auth: hoy auto-token dev).
+- ✅ **Downsampling del histórico** hecho ([AUD-028](./AUDIT.md)): `ITelemetryArchive.QueryDownsampledAsync`
+  + `GET /api/history/series?deviceId&minutes&buckets` (agrega en ~N puntos, promedio por intervalo; rango
+  hasta 7 días). Frontend del histórico usa la serie agregada (rangos 6h/24h). Verificado E2E.
+- **Fase 3 — resto** (SAD §10, local, sin urgencia): runbooks · login real/refresh-token
+  (auth: hoy auto-token dev).
 - **Solo AWS real** (requiere cuenta, hoy bloqueado): **Athena** sobre el data lake S3 · medir
   throughput contra AWS · CDK multi-entorno (dev/staging/prod).
 - **Deuda menor anotada**: durabilidad del borde de ingesta = best-effort (drena al apagar, pero
@@ -374,7 +377,7 @@ Identity Platform; dashboard en modo firebase = `useFirebaseAuth=true` en `app.c
 
 ⚠️ **Costo**: BigQuery pay-per-byte (free-tier cubre dev); Cloud SQL/Memorystore cobran ociosos →
 Budget+Alert + teardown obligatorios.
-Backlog AWS-era que aplica igual en GCP (de [AUD-015](./AUDIT.md)): downsampling, login real/refresh-token.
+Backlog AWS-era que aplica igual en GCP (de [AUD-015](./AUDIT.md)): login real/refresh-token. (Downsampling ✅ [AUD-028](./AUDIT.md).)
 (Mapa real deck.gl + virtual scroll ✅ [AUD-026](./AUDIT.md); DLQ replay ✅ [AUD-027](./AUDIT.md).)
 
 > Al cerrar cada sesión: actualiza §5 (estado), añade entrada en AUDIT.md si hubo cambio

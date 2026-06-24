@@ -109,6 +109,43 @@ public sealed class PostgresTelemetryArchive(IOptions<PostgresOptions> options) 
         return rows;
     }
 
+    public async Task<IReadOnlyList<TelemetryBucket>> QueryDownsampledAsync(
+        string deviceId, DateTimeOffset from, DateTimeOffset to, int buckets,
+        CancellationToken ct = default)
+    {
+        // Tamaño de intervalo = rango / buckets (≥ 1 s). Se agrupa por el inicio del intervalo
+        // (floor del epoch) → como mucho 'buckets' filas, con detalle fino en rangos cortos.
+        var bucketSec = Math.Max(1, (long)((to - from).TotalSeconds / Math.Max(1, buckets)));
+        const string sql = """
+            SELECT to_timestamp(floor(extract(epoch FROM ts) / @bucketSec) * @bucketSec) AS bucket_ts,
+                   count(*)            AS n,
+                   avg(speed_kmh)      AS speed,
+                   avg(fuel_pct)       AS fuel,
+                   avg(engine_temp_c)  AS temp
+            FROM telemetry
+            WHERE device_id = @deviceId AND ts >= @from AND ts < @to
+            GROUP BY bucket_ts
+            ORDER BY bucket_ts;
+            """;
+        await using var conn = new NpgsqlConnection(_cs);
+        await conn.OpenAsync(ct);
+        await using var cmd = new NpgsqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("deviceId", deviceId);
+        cmd.Parameters.AddWithValue("from", from.UtcDateTime);
+        cmd.Parameters.AddWithValue("to", to.UtcDateTime);
+        cmd.Parameters.AddWithValue("bucketSec", bucketSec);
+
+        var rows = new List<TelemetryBucket>(Math.Min(buckets, 256));
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            rows.Add(new TelemetryBucket(
+                new DateTimeOffset(DateTime.SpecifyKind(reader.GetDateTime(0), DateTimeKind.Utc), TimeSpan.Zero),
+                (int)reader.GetInt64(1),
+                reader.GetDouble(2), reader.GetDouble(3), reader.GetDouble(4)));
+
+        return rows;
+    }
+
     public async Task<IReadOnlyList<string>> DropPartitionsBeforeAsync(
         DateOnly cutoff, CancellationToken ct = default)
     {

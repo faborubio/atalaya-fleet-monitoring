@@ -36,6 +36,55 @@ proyecto.
 
 ---
 
+## AUD-028 — Histórico: downsampling por buckets de tiempo (2026-06-24)
+
+**Fase:** Backlog de rendimiento del camino frío (ADR-005/007, del backlog de [AUD-015](#aud-015)).
+**Alcance:** Que los rangos largos del histórico no devuelvan miles de filas crudas: agregar la serie en ~N puntos (promedio por intervalo) del lado del servidor.
+**Auditor:** Fabián Rubio + Claude
+
+### Qué se hizo
+
+- **`TelemetryBucket`** (contrato) + **`ITelemetryArchive.QueryDownsampledAsync(deviceId, from, to, buckets)`**:
+  agrupa el rango en hasta `buckets` intervalos iguales (tamaño = rango/buckets) y devuelve el **promedio**
+  de cada métrica + el conteo, ascendente por tiempo. Tamaño de intervalo adaptativo → detalle fino en
+  rangos cortos, agregación en largos; payload acotado (≈ ancho del gráfico) sin tocar el camino caliente.
+- **Postgres** ([PostgresTelemetryArchive](./libs/persistence/PostgresTelemetryArchive.cs)): `GROUP BY
+  to_timestamp(floor(extract(epoch FROM ts)/bucketSec)*bucketSec)` (estándar, sin depender de `date_bin`/PG14).
+  **InMemory** ([InMemoryTelemetryArchive](./apps/api/Services/InMemoryTelemetryArchive.cs)): mismo criterio
+  de bucket por índice de intervalo.
+- **Endpoint** `GET /api/history/series?deviceId&minutes&buckets` (mismo RBAC que `/api/history`); rango
+  hasta **7 días** (antes 24 h) gracias al downsampling.
+- **Frontend** ([history.ts](./apps/atalaya-web/src/app/features/history/history.ts)): la vista usa la
+  serie agregada para gráfico + stats + tabla (columna `n`=conteo); rangos nuevos **6 h / 24 h**.
+
+### Hallazgos
+
+| Sev | Hallazgo | Acción | Estado |
+|-----|----------|--------|--------|
+| 🟢  | Rangos largos sin miles de puntos; el camino frío sigue desacoplado del caliente | `QueryDownsampledAsync` + `/api/history/series` | Resuelto |
+| 🔵  | Las stats (mín/máx) se calculan sobre **promedios** de bucket, no sobre el crudo → suavizadas | Aceptable para la vista; el bucket lleva el conteo para contexto. Min/max reales = trabajo futuro (añadir agregados por bucket) | Aceptado |
+| 🔵  | Sin poda de particiones en la consulta (filtra por `ts`); Postgres ya poda por la partición de rango | El particionado por día acota el escaneo; suficiente | Aceptado (por diseño) |
+
+### Verificaciones
+
+- [x] `dotnet build` ✅ · `nx test api-tests` **44/44** (test nuevo: 12 eventos en ~24 min → con `buckets=4`
+      a lo sumo 4 puntos y la suma de conteos = 12, ascendente, métricas como promedio).
+- [x] `nx build/lint/test atalaya-web` ✅ (2/2).
+- [x] **E2E real** (API InMemory + simulador, ~2.200 ev): `/api/history?…limit=5000` devuelve **440** puntos
+      crudos de un dispositivo; `/api/history/series?buckets=10` los colapsa en **1** punto agregado
+      (count=440); con granularidad fina (`minutes=1&buckets=20`) → **5 buckets** de 3 s (n=40/112/108/112/68,
+      suma 440), métricas promediadas. Downsampling correcto de punta a punta por el endpoint.
+
+### Conclusión
+
+El histórico ya escala a rangos largos: el servidor agrega la serie en un número acotado de puntos en vez
+de volcar miles de filas, manteniendo el gráfico fluido y el camino frío separado del caliente. Verificado
+E2E (crudo vs. agregado) + unit test del bucketing.
+
+**Veredicto:** ✅ Cerrado y verificado (E2E del endpoint + 44/44 tests).
+
+---
+
 ## AUD-027 — Resiliencia: replay de la DLQ de Pub/Sub (2026-06-24)
 
 **Fase:** Backlog de resiliencia (ADR-006, del backlog de [AUD-015](#aud-015)). Aplica al pivote GCP (la DLQ es de Pub/Sub).

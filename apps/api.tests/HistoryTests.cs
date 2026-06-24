@@ -55,6 +55,33 @@ public sealed class HistoryTests : IClassFixture<WebApplicationFactory<Program>>
         Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
     }
 
+    [Fact]
+    public async Task La_serie_downsampled_agrupa_en_a_lo_sumo_buckets_intervalos()
+    {
+        // 12 eventos repartidos en ~24 min; con buckets=4 sobre 60 min el intervalo es de 15 min →
+        // a lo sumo 4 puntos, y el conteo total agrupado debe ser 12 (downsampling, no pérdida).
+        var ts = DateTimeOffset.UtcNow;
+        var batch = Enumerable.Range(0, 12)
+            .Select(i => new TelemetryEvent(
+                $"d-{i}", "dev-ds", ts.AddMinutes(-i * 2), i, 19.4, -99.1, 40 + i, 90, 80, 70))
+            .ToArray();
+
+        (await _client.PostAsJsonAsync("/ingest", batch)).EnsureSuccessStatusCode();
+
+        // Espera a que la ingesta InMemory archive los 12 (vía la consulta cruda).
+        await PollHistoryAsync("dev-ds", expected: 12);
+
+        var series = await _client.GetFromJsonAsync<List<TelemetryBucket>>(
+            "/api/history/series?deviceId=dev-ds&minutes=60&buckets=4") ?? [];
+
+        Assert.NotEmpty(series);
+        Assert.True(series.Count <= 4, $"esperaba ≤4 buckets, hubo {series.Count}");
+        Assert.Equal(12, series.Sum(b => b.Count)); // todos los eventos quedan representados
+        // Ascendente por tiempo y métricas como promedio (rango plausible de speedKmh sembrado).
+        Assert.True(series.SequenceEqual(series.OrderBy(b => b.Ts)));
+        Assert.All(series, b => Assert.InRange(b.SpeedKmh, 40, 52));
+    }
+
     private async Task<IReadOnlyList<TelemetryEvent>> PollHistoryAsync(string deviceId, int expected)
     {
         for (var attempt = 0; attempt < 50; attempt++)

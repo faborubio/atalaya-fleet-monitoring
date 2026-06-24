@@ -22,6 +22,15 @@ public interface ITelemetryArchive
         CancellationToken ct = default);
 
     /// <summary>
+    /// Serie histórica <b>downsampled</b> (AUD-028): agrupa el rango en hasta <paramref name="buckets"/>
+    /// intervalos iguales y devuelve el promedio de cada métrica por intervalo, ascendente por tiempo.
+    /// Acota el payload en rangos largos (≈ ancho del gráfico) sin tocar el camino caliente.
+    /// </summary>
+    Task<IReadOnlyList<TelemetryBucket>> QueryDownsampledAsync(
+        string deviceId, DateTimeOffset from, DateTimeOffset to, int buckets,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Retención O(1) (ADR-007, AUD-015 p2): elimina las particiones diarias anteriores a
     /// <paramref name="cutoff"/> (DROP, no DELETE). Devuelve las particiones eliminadas.
     /// </summary>

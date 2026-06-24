@@ -228,6 +228,21 @@ Secured(app.MapGet("/api/history", async (
     return Results.Ok(points);
 }));
 
+// Histórico downsampled (ADR-005/007, AUD-028): serie agregada en ~`buckets` puntos. Para rangos
+// largos no devuelve miles de filas crudas; el gráfico se queda fluido. Mismo RBAC que /api/history.
+Secured(app.MapGet("/api/history/series", async (
+    string deviceId, ITelemetryArchive archive, CancellationToken ct,
+    int minutes = 60, int buckets = 200) =>
+{
+    if (string.IsNullOrWhiteSpace(deviceId))
+        return Results.BadRequest(new { error = "deviceId es obligatorio" });
+
+    var to = DateTimeOffset.UtcNow;
+    var from = to.AddMinutes(-Math.Clamp(minutes, 1, 7 * 24 * 60)); // hasta 7 días gracias al downsampling
+    var series = await archive.QueryDownsampledAsync(deviceId, from, to, Math.Clamp(buckets, 10, 1000), ct);
+    return Results.Ok(series);
+}));
+
 // Analítica (camino frío, ADR-005/007, fase G4): agregados por dispositivo desde el data lake vía
 // BigQuery. Solo existe si hay dataset configurado; mismo RBAC de lectura que el resto de lecturas.
 if (gcpAnalytics.AnalyticsEnabled)

@@ -51,6 +51,34 @@ public sealed class InMemoryTelemetryArchive : ITelemetryArchive
         return Task.FromResult<IReadOnlyList<TelemetryEvent>>(result);
     }
 
+    public Task<IReadOnlyList<TelemetryBucket>> QueryDownsampledAsync(
+        string deviceId, DateTimeOffset from, DateTimeOffset to, int buckets,
+        CancellationToken ct = default)
+    {
+        if (!_byDevice.TryGetValue(deviceId, out var list))
+            return Task.FromResult<IReadOnlyList<TelemetryBucket>>([]);
+
+        var bucketSec = Math.Max(1, (to - from).TotalSeconds / Math.Max(1, buckets));
+
+        TelemetryEvent[] inRange;
+        lock (list)
+            inRange = list.Where(e => e.Ts >= from && e.Ts < to).ToArray();
+
+        // Agrupa por el índice de intervalo (mismo criterio que el floor del epoch en Postgres).
+        var result = inRange
+            .GroupBy(e => (long)Math.Floor((e.Ts - from).TotalSeconds / bucketSec))
+            .Select(g => new TelemetryBucket(
+                from.AddSeconds(g.Key * bucketSec),
+                g.Count(),
+                g.Average(e => e.SpeedKmh),
+                g.Average(e => e.FuelPct),
+                g.Average(e => e.EngineTempC)))
+            .OrderBy(b => b.Ts)
+            .ToArray();
+
+        return Task.FromResult<IReadOnlyList<TelemetryBucket>>(result);
+    }
+
     // Sin particiones en memoria: la retención no aplica en modo dev/tests.
     public Task<IReadOnlyList<string>> DropPartitionsBeforeAsync(
         DateOnly cutoff, CancellationToken ct = default) =>

@@ -11,7 +11,7 @@ import { DatePipe, DecimalPipe } from '@angular/common';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FleetStore } from '../../core/telemetry/fleet-store';
 import { HistoryService } from '../../core/telemetry/history.service';
-import { TelemetryEvent } from '../../core/models/telemetry-event';
+import { TelemetryBucket } from '../../core/models/telemetry-bucket';
 
 type MetricKey = 'engineTempC' | 'speedKmh' | 'fuelPct';
 
@@ -35,8 +35,8 @@ const METRICS: { key: MetricKey; label: string }[] = [
       <h2>Históricos</h2>
       <p class="muted">
         Camino frío: serie temporal por dispositivo desde la telemetría
-        <strong>particionada por tiempo</strong> (ADR-007). El crudo inmutable vive además en
-        el data lake S3. Athena queda para AWS real.
+        <strong>particionada por tiempo</strong> (ADR-007), <strong>downsampled</strong> a ~200 puntos
+        (promedio por intervalo) para que los rangos largos no traigan miles de filas.
       </p>
 
       <form class="history__controls" (submit)="$event.preventDefault(); load()">
@@ -61,6 +61,8 @@ const METRICS: { key: MetricKey; label: string }[] = [
             <option value="15">15 min</option>
             <option value="60" selected>1 h</option>
             <option value="180">3 h</option>
+            <option value="360">6 h</option>
+            <option value="1440">24 h</option>
           </select>
         </label>
 
@@ -84,7 +86,7 @@ const METRICS: { key: MetricKey; label: string }[] = [
         <p class="muted">Sin datos. Elige un dispositivo con telemetría reciente y consulta.</p>
       } @else {
         <div class="history__summary">
-          <span class="pill">{{ points().length }} puntos</span>
+          <span class="pill">{{ points().length }} puntos (agregados)</span>
           <span class="pill">mín {{ stats().min | number: '1.0-1' }}</span>
           <span class="pill">máx {{ stats().max | number: '1.0-1' }}</span>
           <span class="pill">prom {{ stats().avg | number: '1.0-1' }}</span>
@@ -98,16 +100,16 @@ const METRICS: { key: MetricKey; label: string }[] = [
 
         <table class="history__table">
           <thead>
-            <tr><th>Hora</th><th>Motor °C</th><th>km/h</th><th>Combustible</th><th>seq</th></tr>
+            <tr><th>Intervalo</th><th>Motor °C</th><th>km/h</th><th>Combustible</th><th>n</th></tr>
           </thead>
           <tbody>
-            @for (p of points().slice(0, 30); track p.eventId) {
+            @for (p of points().slice(0, 30); track p.ts) {
               <tr>
                 <td>{{ p.ts | date: 'HH:mm:ss' }}</td>
                 <td>{{ p.engineTempC | number: '1.0-1' }}</td>
                 <td>{{ p.speedKmh | number: '1.0-0' }}</td>
                 <td>{{ p.fuelPct | number: '1.0-0' }}%</td>
-                <td>{{ p.seq }}</td>
+                <td>{{ p.count }}</td>
               </tr>
             }
           </tbody>
@@ -128,7 +130,7 @@ export class History {
   protected readonly minutes = signal(60);
   protected readonly metric = signal<MetricKey>('engineTempC');
 
-  protected readonly points = signal<TelemetryEvent[]>([]);
+  protected readonly points = signal<TelemetryBucket[]>([]);
   protected readonly loading = signal(false);
   protected readonly error = signal<string | null>(null);
 
@@ -190,7 +192,7 @@ export class History {
     this.error.set(null);
 
     this.history
-      .query(id, this.minutes())
+      .series(id, this.minutes())
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: (pts) => {

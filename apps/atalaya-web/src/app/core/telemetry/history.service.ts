@@ -3,6 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { API_CONFIG } from '../api.config';
 import { TelemetryEvent } from '../models/telemetry-event';
+import { TelemetryBucket } from '../models/telemetry-bucket';
 
 /**
  * Cliente del camino frío (ADR-005/007): consulta histórica por dispositivo contra la
@@ -22,6 +23,21 @@ export class HistoryService {
     });
     return this.http.get<TelemetryEvent[]>(
       `${this.config.baseUrl}/api/history?${params.toString()}`
+    );
+  }
+
+  /**
+   * Serie histórica downsampled (AUD-028): hasta `buckets` puntos agregados (promedio por intervalo).
+   * Para rangos largos no trae miles de filas crudas; el gráfico se queda fluido.
+   */
+  series(deviceId: string, minutes: number, buckets = 200): Observable<TelemetryBucket[]> {
+    const params = new URLSearchParams({
+      deviceId,
+      minutes: String(minutes),
+      buckets: String(buckets),
+    });
+    return this.http.get<TelemetryBucket[]>(
+      `${this.config.baseUrl}/api/history/series?${params.toString()}`
     );
   }
 }

@@ -99,6 +99,13 @@ if (useBroker)
             sp.GetRequiredService<QueueingTelemetryPublisher>());
         builder.Services.AddHostedService<GcpPubSubBatchPublisher>();
         healthChecks.AddCheck<PubSubHealthCheck>("pubsub", tags: ["ready"]);
+
+        // Replay de la DLQ (ADR-006): lee la suscripción de la DLQ y re-encola al topic principal.
+        builder.Services.AddSingleton(_ => new SubscriberServiceApiClientBuilder
+        {
+            EmulatorDetection = EmulatorDetection.EmulatorOrProduction,
+        }.Build());
+        builder.Services.AddSingleton<IDlqReplayer, PubSubDlqReplayer>();
     }
 }
 else
@@ -232,6 +239,19 @@ if (gcpAnalytics.AnalyticsEnabled)
         var rows = await analytics.DeviceAggregatesAsync(from, Math.Clamp(limit, 1, 500), ct);
         return Results.Ok(rows);
     }));
+}
+
+// Replay de la DLQ (ADR-006, acción de operación): re-encola los mensajes muertos al topic principal.
+// Solo en modo Gcp (la DLQ es de Pub/Sub) y reservado a admin (RBAC). Idempotente del lado del worker.
+if (useGcp)
+{
+    var replay = app.MapPost("/api/admin/dlq/replay", async (
+        IDlqReplayer replayer, CancellationToken ct, int max = 100) =>
+    {
+        var replayed = await replayer.ReplayAsync(Math.Clamp(max, 1, 1000), ct);
+        return Results.Ok(new { replayed });
+    });
+    if (authOptions.IsEnabled) replay.RequireAuthorization(AuthExtensions.AdminPolicy);
 }
 
 // Hub de deltas en vivo (ADR-002). En modo auth, exige la misma read policy (token por query string).

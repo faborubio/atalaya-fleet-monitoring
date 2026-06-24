@@ -32,6 +32,41 @@ resolvieron**. El objetivo es no tropezar dos veces con la misma piedra.
 
 ---
 
+## TS-008 — Apps .NET no conectan a Redis/Postgres por `localhost` tras reiniciar Docker
+
+**Fecha:** 2026-06-24 · **Área:** infra · **Estado:** ✅ Resuelto (2026-06-24)
+
+**Síntoma**
+```
+Unhandled exception. StackExchange.Redis.RedisConnectionException: It was not possible to
+connect to the redis server(s). Error connecting right now...
+   at Atalaya.Realtime.ServiceCollectionExtensions...AddAtalayaRedis...
+```
+La API/worker fallan al arrancar (exit 82) **aunque** `docker ps` muestra los contenedores `healthy`
+y `Test-NetConnection localhost 6379` da `True`. `docker exec ... redis-cli ping` responde `PONG`.
+
+**Causa raíz**
+Dos cosas combinadas tras **reiniciar Docker Desktop**: (1) el reenvío de puertos del host tarda unos
+segundos en quedar operativo aun después de `healthy` (los apps arrancan demasiado pronto y conectan
+fail-fast); (2) `localhost` resuelve primero a **IPv6 (`::1`)** y el proxy IPv6 de Docker (`[::]:6379`)
+queda flaky, mientras el IPv4 (`0.0.0.0:6379`) sí funciona.
+
+**Solución**
+Esperar a que la infra esté `healthy` **y** forzar **IPv4** en las connection strings (env):
+```
+$env:ConnectionStrings__Redis="127.0.0.1:6379"
+$env:ConnectionStrings__Postgres="Host=127.0.0.1;Port=5432;Database=atalaya;Username=atalaya;Password=atalaya"
+```
+
+**Prevención**
+Tras un restart de Docker, validar el puerto con un cliente real (no solo `Test-NetConnection`, que solo
+hace el SYN) antes de arrancar; preferir `127.0.0.1` a `localhost` en dev. Matar procesos `dotnet`
+zombie (`Stop-Process -Name dotnet,Atalaya.Api,Atalaya.Worker`) entre reintentos: instancias a medio
+arrancar compiten por suscripciones Pub/Sub y confunden el diagnóstico (p.ej. el replay de la DLQ
+reportando conteo 0 mientras otra instancia reprocesa, AUD-027).
+
+---
+
 ## TS-007 — `cdklocal` rompe con la CLI nueva de aws-cdk (`lib/cdk-toolkit` not exported)
 
 **Fecha:** 2026-06-22 · **Área:** infra · **Estado:** ✅ Resuelto (2026-06-22)

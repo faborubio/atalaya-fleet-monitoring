@@ -214,9 +214,16 @@ cero pérdida (59.200/59.200). Deuda menor: reintento/persistencia ante `Publish
   de Pub/Sub (G1). **Cambios de app para contenedor:** worker health en `http://+:$PORT` cuando hay `PORT`
   (Cloud Run); CORS por `Cors:Origins`. Dockerfiles multi-stage en `apps/{api,worker}/Dockerfile` (contexto
   = raíz). **Validado `terraform validate` + build de imágenes ($0)**; `apply`/`firebase deploy`/teardown = G5b.
+- **DLQ replay (AUD-027, ADR-006)**: cierra el ciclo de la cola de muertos. Suscripción sobre el topic
+  DLQ (`atalaya-telemetry-dlq-sub`, la crea el worker en emulador / Terraform en nube) para retener los
+  dead-letters. `IDlqReplayer`/`PubSubDlqReplayer` hace pull de esa sub, **re-publica al topic principal**
+  (el worker reprocesa) y **ack tras publicar** (no pierde; reproceso idempotente). Endpoint
+  `POST /api/admin/dlq/replay?max=N` (solo modo Gcp, **RBAC admin**). **Revisión crítica:** el replay se
+  colgaba en el pull final sobre la DLQ vacía (long-poll) → patrón **pull único acotado por deadline 5 s**
+  (con mensajes responde en ms; vacío → 0). Verificado E2E contra el emulador.
 - Interfaces de extensión (para swaps sin reescribir): `ITelemetryPublisher`, `IDeviceStateRepository`,
   `IAlertIncidentStore`, `ITelemetryArchive`, `IRawEventArchive`, `IEventDeduplicator`,
-  `ITelemetryBroadcaster`, `IAlertBroadcaster`, `IAnalyticsQuery`.
+  `ITelemetryBroadcaster`, `IAlertBroadcaster`, `IAnalyticsQuery`, `IDlqReplayer`.
 - `nuget.config` en la raíz ([TS-004](./TROUBLESHOOTING.md#ts-004--dotnet-no-resuelve-paquetes-nuget-sin-fuentes)).
 
 ### Cómo levantar todo (pipeline real)
@@ -250,8 +257,10 @@ está completo y verificado E2E. Lo que resta es **endurecimiento incremental** 
 - ✅ **Mapa real (deck.gl) + virtual scroll (CDK)** hechos ([AUD-026](./AUDIT.md)): dashboard con basemap
   OSM + `ScatterplotLayer` geolocalizado (deck.gl dynamic-import, fuera del bundle inicial); tabla de
   dispositivos con `cdk-virtual-scroll-viewport` (sin cap). Verificado E2E en navegador real.
-- **Fase 3 — resto** (SAD §10, local, sin urgencia): DLQ **replay** · downsampling del histórico ·
-  runbooks · login real/refresh-token (auth: hoy auto-token dev).
+- ✅ **DLQ replay** hecho ([AUD-027](./AUDIT.md)): `POST /api/admin/dlq/replay` (modo Gcp, RBAC admin)
+  re-encola los dead-letters al topic principal. Verificado E2E contra el emulador.
+- **Fase 3 — resto** (SAD §10, local, sin urgencia): downsampling del histórico · runbooks ·
+  login real/refresh-token (auth: hoy auto-token dev).
 - **Solo AWS real** (requiere cuenta, hoy bloqueado): **Athena** sobre el data lake S3 · medir
   throughput contra AWS · CDK multi-entorno (dev/staging/prod).
 - **Deuda menor anotada**: durabilidad del borde de ingesta = best-effort (drena al apagar, pero
@@ -365,8 +374,8 @@ Identity Platform; dashboard en modo firebase = `useFirebaseAuth=true` en `app.c
 
 ⚠️ **Costo**: BigQuery pay-per-byte (free-tier cubre dev); Cloud SQL/Memorystore cobran ociosos →
 Budget+Alert + teardown obligatorios.
-Backlog AWS-era que aplica igual en GCP (de [AUD-015](./AUDIT.md)): DLQ replay, downsampling,
-login real/refresh-token. (Mapa real deck.gl + virtual scroll ✅ hechos, [AUD-026](./AUDIT.md).)
+Backlog AWS-era que aplica igual en GCP (de [AUD-015](./AUDIT.md)): downsampling, login real/refresh-token.
+(Mapa real deck.gl + virtual scroll ✅ [AUD-026](./AUDIT.md); DLQ replay ✅ [AUD-027](./AUDIT.md).)
 
 > Al cerrar cada sesión: actualiza §5 (estado), añade entrada en AUDIT.md si hubo cambio
 > auditable, y registra en TROUBLESHOOTING.md cualquier error resuelto.

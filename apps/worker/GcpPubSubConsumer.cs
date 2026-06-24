@@ -138,8 +138,24 @@ public sealed class GcpPubSubConsumer(
         }
         catch (RpcException e) when (e.StatusCode == StatusCode.AlreadyExists) { /* idempotente */ }
 
+        // Suscripción sobre el topic DLQ: sin ella Pub/Sub no retiene los dead-letters y el replay
+        // (ADR-006) no tendría qué leer. La lee el API en /api/admin/dlq/replay. En la nube la crea
+        // Terraform; aquí (emulador) la aseguramos junto al resto de la topología.
+        var dlqSubscription = SubscriptionName.FromProjectSubscription(
+            options.ProjectId, options.DeadLetterSubscriptionId);
+        try
+        {
+            await subscriberApi.CreateSubscriptionAsync(new Subscription
+            {
+                SubscriptionName = dlqSubscription,
+                TopicAsTopicName = dlqTopic,
+                AckDeadlineSeconds = 60,
+            }, ct);
+        }
+        catch (RpcException e) when (e.StatusCode == StatusCode.AlreadyExists) { /* idempotente */ }
+
         logger.LogInformation(
-            "Topología Pub/Sub asegurada en el emulador: {Topic} / {Subscription} (DLQ {Dlq}, {N} intentos)",
-            topic, subscription, dlqTopic, options.MaxDeliveryAttempts);
+            "Topología Pub/Sub asegurada en el emulador: {Topic} / {Subscription} (DLQ {Dlq} + sub {DlqSub}, {N} intentos)",
+            topic, subscription, dlqTopic, dlqSubscription, options.MaxDeliveryAttempts);
     }
 }

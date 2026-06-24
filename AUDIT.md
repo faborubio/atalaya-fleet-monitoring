@@ -36,6 +36,53 @@ proyecto.
 
 ---
 
+## AUD-027 — Resiliencia: replay de la DLQ de Pub/Sub (2026-06-24)
+
+**Fase:** Backlog de resiliencia (ADR-006, del backlog de [AUD-015](#aud-015)). Aplica al pivote GCP (la DLQ es de Pub/Sub).
+**Alcance:** Cerrar el ciclo de la cola de mensajes muertos: la DLQ ya **retenía** los mensajes que agotaron los reintentos; faltaba **re-encolarlos** para reprocesar una vez resuelta la causa. Acción de operación (RBAC admin).
+**Auditor:** Fabián Rubio + Claude
+
+### Qué se hizo
+
+- **Suscripción sobre el topic DLQ** (`atalaya-telemetry-dlq-sub`): sin una suscripción, Pub/Sub no
+  retiene los dead-letters. La crea el worker contra el emulador ([GcpPubSubConsumer](./apps/worker/GcpPubSubConsumer.cs))
+  y **Terraform** en la nube ([pubsub.tf](./infra/terraform/pubsub.tf), + IAM `pubsub.subscriber` a la SA del API).
+- **`IDlqReplayer` / `PubSubDlqReplayer`** ([DlqReplayer.cs](./apps/api/Services/DlqReplayer.cs)): hace
+  pull de la suscripción DLQ, **re-publica** cada mensaje crudo al topic principal (que el worker
+  reprocesa) y **solo entonces** lo reconoce en la DLQ. Orden publicar→ack ⇒ un fallo no pierde el
+  dead-letter (queda sin ack → reentrega); el reproceso es seguro por la idempotencia del pipeline
+  (dedup por EventId, clave por hash, máquina de incidentes) — at-least-once (ADR-006).
+- **Endpoint** `POST /api/admin/dlq/replay?max=N` ([Program.cs](./apps/api/Program.cs)): solo en modo
+  Gcp, **RBAC admin** (política `admin` reservada en AUD-019). Devuelve cuántos re-encoló.
+
+### Hallazgos
+
+| Sev | Hallazgo | Acción | Estado |
+|-----|----------|--------|--------|
+| 🟢  | Cierra el ciclo de resiliencia ADR-006 (DLQ → replay → reproceso idempotente) | `IDlqReplayer` + endpoint admin | Resuelto |
+| 🟠  | **El replay se colgaba (revisión crítica):** el bucle "pull hasta vaciar" hacía un pull final sobre la DLQ vacía que se quedaba en **long-poll indefinido** → el endpoint nunca respondía | **Pull único acotado** por deadline (5 s): con mensajes responde en ms; vacío vence limpio → 0. (Se descartó `ReturnImmediately`: ~20 s de reintentos en vacío y una **carrera** que reportaba conteo 0 con mensajes presentes) | Resuelto |
+| 🟡  | Conteo 0 aun reprocesando durante las pruebas | Era **contención multi-instancia** (instancias zombie del API compartiendo el pull de la DLQ); con una instancia el conteo es exacto. El reproceso duplicado sería inofensivo (idempotente) | Diagnosticado |
+| 🔵  | Pull de hasta 1000/llamada (máximo de Pub/Sub) | Para colas mayores se reinvoca el replay; suficiente para operación | Aceptado (por diseño) |
+
+### Verificaciones
+
+- [x] `dotnet build Atalaya.sln` ✅ · `nx test api-tests` **43/43**.
+- [x] **E2E contra el emulador Pub/Sub** (worker+API en modo Gcp, una instancia): se publica un lote
+      válido **directo al topic DLQ** (simula un dead-letter retenido); `POST /api/admin/dlq/replay`
+      devuelve **`{"replayed":1}` en ~0.06 s** y el dispositivo aparece **reprocesado** en `/api/devices`
+      (cadena DLQ→replay→topic principal→worker→read model). Replay sobre DLQ vacía → `0`, acotado por el
+      deadline. Suscripción DLQ confirmada en el emulador (`atalaya-telemetry-dlq-sub`).
+
+### Conclusión
+
+La resiliencia at-least-once queda cerrada de punta a punta: lo que cae a la DLQ ya no es un callejón sin
+salida, sino algo **operable** (replay admin) y seguro (re-encolar→reproceso idempotente). La revisión
+crítica evitó un endpoint que se colgaba en el pull final y fijó el patrón **pull único acotado**.
+
+**Veredicto:** ✅ Cerrado y verificado E2E contra el emulador (incluida la revisión crítica y su fix).
+
+---
+
 ## AUD-026 — Frontend: mapa real (deck.gl) + virtual scroll (CDK) (2026-06-24)
 
 **Fase:** Backlog de alto rendimiento de frontend (ADR-010, SAD §9), del backlog de [AUD-015](#aud-015). No es fase del pivote GCP.

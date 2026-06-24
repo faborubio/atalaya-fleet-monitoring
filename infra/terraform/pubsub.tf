@@ -48,3 +48,21 @@ resource "google_pubsub_subscription_iam_member" "dlq_subscriber" {
   role         = "roles/pubsub.subscriber"
   member       = local.pubsub_agent
 }
+
+# Suscripción sobre el topic DLQ: retiene los dead-letters para que el replay (ADR-006,
+# /api/admin/dlq/replay) los lea y re-encole al topic principal. Sin ella Pub/Sub no los retiene.
+resource "google_pubsub_subscription" "dlq" {
+  name  = "atalaya-telemetry-dlq-sub"
+  topic = google_pubsub_topic.dlq.id
+
+  ack_deadline_seconds       = 60
+  message_retention_duration = "604800s" # 7 días: ventana amplia para operar el replay
+}
+
+# La SA del API necesita leer (pull/ack) la suscripción de la DLQ para el replay; publicar al topic
+# principal ya lo cubre su rol pubsub.publisher de proyecto. Mínimo privilegio: scope a la suscripción.
+resource "google_pubsub_subscription_iam_member" "api_dlq_reader" {
+  subscription = google_pubsub_subscription.dlq.id
+  role         = "roles/pubsub.subscriber"
+  member       = "serviceAccount:${google_service_account.api.email}"
+}

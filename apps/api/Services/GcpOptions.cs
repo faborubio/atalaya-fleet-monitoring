@@ -10,6 +10,10 @@ public sealed class GcpOptions
     public string ProjectId { get; set; } = "atalaya-local";
     public string TopicId { get; set; } = "atalaya-telemetry";
 
+    /// <summary>Suscripción sobre el topic DLQ, leída por el replay de la DLQ (ADR-006). La crea el
+    /// worker contra el emulador y Terraform en la nube.</summary>
+    public string DeadLetterSubscriptionId { get; set; } = "atalaya-telemetry-dlq-sub";
+
     /// <summary>Host:puerto del emulador Pub/Sub. Vacío = Pub/Sub real (no auto-crea topología).</summary>
     public string EmulatorHost { get; set; } = string.Empty;
 

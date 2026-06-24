@@ -13,6 +13,9 @@ public sealed class GcpOptions
     public string SubscriptionId { get; set; } = "atalaya-telemetry-sub";
     /// <summary>Topic de mensajes envenenados (DLQ), espeja la DLQ de SQS (redrive maxReceiveCount=5).</summary>
     public string DeadLetterTopicId { get; set; } = "atalaya-telemetry-dlq";
+    /// <summary>Suscripción sobre el topic DLQ: retiene los dead-letters para que el replay (ADR-006)
+    /// pueda leerlos y re-encolarlos. Sin suscripción, Pub/Sub no retiene los mensajes del topic.</summary>
+    public string DeadLetterSubscriptionId { get; set; } = "atalaya-telemetry-dlq-sub";
     /// <summary>Intentos antes de enviar a la DLQ (paridad con SQS). Pub/Sub exige 5..100.</summary>
     public int MaxDeliveryAttempts { get; set; } = 5;
 

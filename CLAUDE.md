@@ -62,8 +62,9 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
 ([AUD-018](./AUDIT.md)) + **Fase 3 seguridad: auth de lecturas OIDC/JWT** ([AUD-019](./AUDIT.md)).
 **El producto (en AWS/LocalStack) está completo.** **Pivote a GCP en marcha** ([AUD-020](./AUDIT.md),
 roadmap G0…G6): **G1 (Pub/Sub)** ([AUD-021](./AUDIT.md)) y **G2 (data lake en Cloud Storage)**
-([AUD-022](./AUDIT.md)) verificados contra emuladores, y **G3 (auth OIDC real con Identity Platform)**
-([AUD-023](./AUDIT.md)) verificado contra el proyecto **real `fabian-portafolio`**. Lo siguiente: G4 (BigQuery).
+([AUD-022](./AUDIT.md)) verificados contra emuladores; **G3 (auth OIDC real con Identity Platform)**
+([AUD-023](./AUDIT.md)) y **G4 (analítica con BigQuery sobre el data lake)** ([AUD-024](./AUDIT.md))
+verificados contra el proyecto **real `fabian-portafolio`**. Lo siguiente: G5 (Terraform + Cloud Run + Firebase Hosting).
 
 ### Hecho
 - ✅ SAD v1.0.1 (ADR-001…011) + docs base. Repo en GitHub (12+ commits).
@@ -102,11 +103,12 @@ roadmap G0…G6): **G1 (Pub/Sub)** ([AUD-021](./AUDIT.md)) y **G2 (data lake en 
   `/api/devices|alerts|history` y el hub (token por `?access_token=`). Emisor dev `/auth/dev-token` +
   dashboard con **auto-token silencioso** (interceptor `/api/*` + `accessTokenFactory`). La ingesta no
   cambia (token de dispositivo). 39/39 tests + E2E en vivo (401/200/400/403).
-- ✅ **Pivote a GCP — G1/G2/G3** (ADR-013, [AUD-020](./AUDIT.md)…[AUD-023](./AUDIT.md)): **Pub/Sub**
+- ✅ **Pivote a GCP — G1/G2/G3/G4** (ADR-013, [AUD-020](./AUDIT.md)…[AUD-024](./AUDIT.md)): **Pub/Sub**
   (publisher+consumer tras flag `Telemetry:Transport=Gcp`, DLQ+veneno) · **Cloud Storage** data lake
-  (`GcsRawEventArchive`, dedup check+commit) · **Identity Platform** auth OIDC real (login Firebase,
-  RBAC por custom claim). Verificados E2E contra emuladores (G1/G2) y el proyecto real
-  **fabian-portafolio** (G3). 42/42 tests. **Siguiente: G4 BigQuery** (ver §7).
+  (`GcsRawEventArchive`, dedup check+commit, **NDJSON**) · **Identity Platform** auth OIDC real (login
+  Firebase, RBAC por custom claim) · **BigQuery** external table sobre el lake + endpoint
+  `/api/analytics/devices` (cost guard `MaximumBytesBilled`). Verificados E2E contra emuladores (G1/G2)
+  y el proyecto real **fabian-portafolio** (G3 auth, G4 BigQuery). 43/43 tests. **Siguiente: G5 IaC/Cloud Run** (ver §7).
 
 ### ✅ Hallazgo de carga de AUD-009 — RESUELTO ([AUD-010](./AUDIT.md))
 El cuello era el **`PublishAsync` síncrono a SNS por request** (p95 de `/ingest` = 34 s bajo
@@ -182,9 +184,20 @@ cero pérdida (59.200/59.200). Deuda menor: reintento/persistencia ante `Publish
   claims con `scripts/set-role.mjs` (firebase-admin, acepta ruta de service account key, sin gcloud).
   Proyecto real **fabian-portafolio**; `apiKey` web es público. Default del dashboard = `dev`
   (`useFirebaseAuth` en `app.config.ts` lo cambia a firebase). Tests fuerzan auth desactivada/stub.
+- **Analítica BigQuery G4 (AUD-024, ADR-013)**: **el lake ahora es NDJSON** (un evento por línea,
+  `RawEventKey` — compartido con S3; la clave/hash idempotente no cambia). Setup reproducible
+  `scripts/bigquery-setup.mjs` (`@google-cloud/bigquery`, sin gcloud) crea dataset `atalaya_analytics`
+  + **external table** `telemetry_raw` sobre `gs://atalaya-datalake/raw/*.json` (`NEWLINE_DELIMITED_JSON`;
+  ubicación del dataset = la del bucket, `BQ_LOCATION`). Endpoint `/api/analytics/devices?minutes&limit`
+  (`BigQueryAnalyticsQuery` tras `IAnalyticsQuery`, RBAC `read`) → agregados por dispositivo. Se registra
+  **solo si `Gcp:DatasetId`** (ausente en base/tests). Cliente con ADC (`GOOGLE_APPLICATION_CREDENTIALS`).
+  **Cost guard** `Gcp:AnalyticsMaxBytesBilled` (default 1 GB, `MaximumBytesBilled`) porque el layout
+  `yyyy/MM/dd` **no es hive** → sin poda de particiones, cada query escanea todo el lake (pay-per-byte).
+  IAM runtime mínimo de la SA de consulta: `bigquery.jobUser` + `bigquery.dataViewer` + `storage.objectViewer`
+  (sobre el bucket). El setup (crear dataset/tabla) exige editor (`bigquery.dataEditor`/admin), no solo viewer.
 - Interfaces de extensión (para swaps sin reescribir): `ITelemetryPublisher`, `IDeviceStateRepository`,
   `IAlertIncidentStore`, `ITelemetryArchive`, `IRawEventArchive`, `IEventDeduplicator`,
-  `ITelemetryBroadcaster`, `IAlertBroadcaster`.
+  `ITelemetryBroadcaster`, `IAlertBroadcaster`, `IAnalyticsQuery`.
 - `nuget.config` en la raíz ([TS-004](./TROUBLESHOOTING.md#ts-004--dotnet-no-resuelve-paquetes-nuget-sin-fuentes)).
 
 ### Cómo levantar todo (pipeline real)
@@ -202,9 +215,12 @@ docker compose -f infra/docker-compose.yml up -d redis postgres pubsub-emulator 
 $env:Telemetry__Transport="Gcp"; npx nx serve api      # publica al emulador Pub/Sub
 $env:Telemetry__Transport="Gcp"; npx nx serve worker   # consume Pub/Sub + archiva en GCS (fake-gcs)
 ```
-Verificación: `npx nx run-many -t build lint test` · `nx test api-tests` (**42/42** con Docker;
-**39 + 3 saltados** sin Docker, por los tests de Testcontainers). Health: `curl :3000/health/ready`
+Verificación: `npx nx run-many -t build lint test` · `nx test api-tests` (**43/43** con Docker;
+**40 + 3 saltados** sin Docker, por los tests de Testcontainers). Health: `curl :3000/health/ready`
 y `:3100/health/ready` (worker). Carga: ver [DEPLOY.md §1.6](./DEPLOY.md) (k6 vía Docker).
+Analítica (G4, BigQuery real): `node scripts/bigquery-setup.mjs fabian-portafolio atalaya-datalake
+atalaya_analytics <sa-key.json>` y, con la API en modo Gcp + `Gcp__DatasetId=atalaya_analytics` +
+`GOOGLE_APPLICATION_CREDENTIALS`, `curl ":3000/api/analytics/devices?minutes=60&limit=10"`.
 Auth (modo Dev en Development): `curl :3000/auth/dev-token?role=operador` → JWT; el dashboard lo
 adquiere solo. Lecturas sin token → 401; con rol operador/admin → 200.
 
@@ -271,15 +287,16 @@ atalaya/
 
 ## 7. Próximos pasos sugeridos (para la nueva sesión)
 
-**Estado:** Fases 0→3 completas en AWS/LocalStack + **pivote a GCP G1/G2/G3 hechos y verificados E2E**
-([AUD-021](./AUDIT.md)/[AUD-022](./AUDIT.md)/[AUD-023](./AUDIT.md)). Último commit: **G3** (`e8d48d9`,
-auth OIDC real). **Siguiente: G4 (BigQuery).** Para retomar, leer §1 (banner de pivote) + §5 +
-[AUD-020](./AUDIT.md) (roadmap) + el último audit [AUD-023](./AUDIT.md).
+**Estado:** Fases 0→3 completas en AWS/LocalStack + **pivote a GCP G1/G2/G3/G4 hechos y verificados E2E**
+([AUD-021](./AUDIT.md)…[AUD-024](./AUDIT.md)). Último commit (previo a G4): **G3** (`e8d48d9`,
+auth OIDC real). **Siguiente: G5 (Terraform + Cloud Run + Firebase Hosting).** Para retomar, leer §1
+(banner de pivote) + §5 + [AUD-020](./AUDIT.md) (roadmap) + el último audit [AUD-024](./AUDIT.md).
 
 > **Flujo por fase G (acordado, [memoria] `gcp-phase-workflow`):** implementar → **verificar E2E real**
 > (no solo build/tests) → **revisión crítica** → aplicar el fix que surja → documentar en los .md →
 > **commit + push** a `origin main`. La revisión crítica va **antes** del push. En G1 halló el gap de
-> DLQ; en G2 la pérdida por dedup-antes-de-efectos; en G3 el WebSocket vivo tras logout.
+> DLQ; en G2 la pérdida por dedup-antes-de-efectos; en G3 el WebSocket vivo tras logout; en G4 la
+> falta de tope de costo (BigQuery pay-per-byte sin poda de particiones → cost guard).
 
 **Para correr el pipeline GCP (emuladores, costo $0):**
 ```
@@ -291,8 +308,8 @@ Identity Platform; dashboard en modo firebase = `useFirebaseAuth=true` en `app.c
 
 **Roadmap del pivote a GCP (orden de ejecución, cada fase verificable):**
 0. **G0 — Fundaciones**: proyecto GCP + **Budget+Alert** (tope) · habilitar APIs · service accounts.
-   Hecho parcial: proyecto **fabian-portafolio** existe (Identity Platform activo en G3). Falta budget
-   alert + habilitar BigQuery para G4. ✋ Pasos de consola los hace el usuario.
+   Hecho: proyecto **fabian-portafolio** existe (Identity Platform activo en G3, BigQuery API habilitada
+   + budget alert en G4). ✋ Pasos de consola los hace el usuario.
 1. **G1 — Pub/Sub** ✅ **HECHO** ([AUD-021](./AUDIT.md)): `GcpPubSubBatchPublisher` (API) +
    `GcpPubSubConsumer` (worker) tras el flag `Telemetry:Transport=Gcp`, lote común en
    `TelemetryBatchProcessor`, readiness `IWorkerReadiness`. Verificado E2E contra el emulador.
@@ -303,15 +320,13 @@ Identity Platform; dashboard en modo firebase = `useFirebaseAuth=true` en `app.c
    authority/audience de Identity Platform; login real Angular (Firebase Auth, dynamic-import);
    roles por custom claim (`scripts/set-role.mjs`). Verificado E2E contra `fabian-portafolio`
    (401/403/200). Proyecto real: **fabian-portafolio**; test user `atalaya-test@atalaya.dev`.
-4. **G4 — BigQuery (SIGUIENTE)**: consultas analíticas sobre el data lake GCS (cierra Athena). Notas
-   para arrancar: el lake está en el bucket **`atalaya-datalake`**, objetos JSON en
-   `raw/yyyy/MM/dd/{sha256}.json` (un array de `TelemetryEvent` por objeto, escrito por
-   `GcsRawEventArchive`). Opción A: **external table** de BigQuery sobre `gs://atalaya-datalake/raw/*`
-   (JSON newline-delimited — ⚠️ hoy cada objeto es un **array** JSON, no NDJSON; quizá haya que ajustar
-   el formato de escritura a una línea por evento, o usar `JSON`/wildcard + UNNEST). Opción B: cargar a
-   una tabla nativa. Requiere proyecto real (fabian-portafolio) + dataset BigQuery + habilitar la API.
-   **No hay emulador de BigQuery decente** → se valida contra BigQuery real (free-tier 1 TB consultas/mes
-   cubre esto; vigilar budget). Posible endpoint nuevo tipo `/api/analytics` o solo consultas documentadas.
+4. **G4 — BigQuery** ✅ **HECHO** ([AUD-024](./AUDIT.md)): se eligió **external table** (Opción A) sobre
+   `gs://atalaya-datalake/raw/*.json`. El lake pasó a **NDJSON** (un evento por línea en `RawEventKey`,
+   resolviendo el ⚠️ del array). Setup `scripts/bigquery-setup.mjs` (dataset `atalaya_analytics` + tabla
+   `telemetry_raw`). Endpoint **`/api/analytics/devices`** (`BigQueryAnalyticsQuery` tras `IAnalyticsQuery`)
+   con **cost guard** `MaximumBytesBilled`. Verificado E2E contra BigQuery real (`fabian-portafolio`).
+   IAM runtime mínimo de la SA `bq-query-service`: `bigquery.jobUser` + `bigquery.dataViewer` +
+   `storage.objectViewer`. **No hay emulador de BigQuery** → se validó contra el proyecto real.
 5. **G5 — IaC Terraform + despliegue Cloud Run** (API+worker) + SPA a Firebase Hosting.
 6. **G6 — Medición real** (k6 contra Pub/Sub real) + **script de teardown** (apagar Cloud SQL/Memorystore).
 

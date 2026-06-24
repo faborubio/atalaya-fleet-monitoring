@@ -198,7 +198,7 @@ La ingesta **nunca escribe directo a la base**. Publica a **SNS** (fan-out), que
 |---|---|---|
 | SNS → SQS (ingesta, ADR-001) | **Pub/Sub** (topic + subscriptions) | Pub/Sub emulator |
 | S3 data lake (camino frío, ADR-007) | **Cloud Storage (GCS)** | `fake-gcs-server` |
-| Athena (analítica sobre el lake) | **BigQuery** (tabla externa/carga) | — (consultas en la nube) |
+| Athena (analítica sobre el lake) | **BigQuery** (external table NDJSON, G4 ✅ AUD-024) | — (sin emulador; se valida en la nube) |
 | Cognito / OIDC (ADR-012) | **Identity Platform** (JWKS) | emisor dev HS256 (ya existe) |
 | CDK (IaC, ADR-009) | **Terraform / OpenTofu** | `terraform plan` local |
 | EC2/ECS (cómputo) | **Cloud Run** (API + worker en contenedor) | `dotnet run` / Docker local |
@@ -347,6 +347,7 @@ Cada fase entrega algo demostrable y medido. La prueba de carga y la latencia ev
 | 1.0.1 | 2026-06-22 | ADR-011: implementación incremental con shims de dev tras interfaces (flag `Telemetry:Transport`), puente Redis pub/sub como interino del backplane SignalR y `awslocal` como interino de CDK. Refleja Fase 0–1 implementadas (ver AUDIT AUD-001…006). |
 | 1.0.2 | 2026-06-23 | ADR-012: auth de lecturas con JWT Bearer flag-gated (`Auth:Mode` Dev HS256 / Oidc JWKS, OIDC-ready hacia Cognito) + RBAC operador/admin en `/api/*` y el hub (token por `?access_token=`). Cierra la brecha de lecturas abiertas de AUD-015 (ver AUDIT AUD-019). |
 | 1.0.3 | 2026-06-23 | ADR-013: **pivote de nube AWS → GCP** (Pub/Sub, Cloud Storage, BigQuery, Identity Platform, Cloud Run, Cloud SQL, Memorystore; emuladores locales). Mismo diseño (ADR-011), otro proveedor; adaptadores GCP tras las interfaces. Roadmap G0…G6 en AUDIT AUD-020. Decisión registrada; implementación pendiente. |
+| 1.0.4 | 2026-06-24 | Avance de ejecución de ADR-013: **G1** Pub/Sub (AUD-021), **G2** Cloud Storage data lake en NDJSON (AUD-022/024), **G3** Identity Platform auth OIDC real (AUD-023), **G4** **BigQuery** external table sobre el lake + endpoint `/api/analytics/devices` con cost guard `MaximumBytesBilled` (AUD-024). Verificados E2E (G3/G4 contra `fabian-portafolio` real). Cierra Athena. Siguiente: G5 (Terraform + Cloud Run + Firebase Hosting). |
 
 ---
 

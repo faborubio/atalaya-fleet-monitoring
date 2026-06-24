@@ -36,6 +36,75 @@ proyecto.
 
 ---
 
+## AUD-024 — Pivote a GCP · G4: analítica con BigQuery sobre el data lake (2026-06-24)
+
+**Fase:** Pivote a GCP ([ADR-013](./SAD-Atalaya.md)), **fase G4** del roadmap de [AUD-020](#aud-020--decisión-pivote-de-nube-aws--gcp-2026-06-23). Cierra el equivalente a Athena: consultas analíticas sobre el data lake **sin copiar datos**.
+**Alcance:** Formato del lake a **NDJSON** + **external table** de BigQuery sobre `gs://atalaya-datalake/raw/*.json` + endpoint **`/api/analytics/devices`** (cliente .NET, RBAC de lectura). Verificado E2E contra **BigQuery real** (`fabian-portafolio`).
+**Auditor:** Fabián Rubio + Claude
+
+### Qué se hizo
+
+- **Formato del lake → NDJSON** ([RawEventKey.cs](./libs/persistence/RawEventKey.cs)): el cuerpo de cada
+  objeto crudo pasa de **un array JSON** a **un evento por línea** (`NEWLINE_DELIMITED_JSON`), que es
+  lo que BigQuery lee como filas con una *external table* directa. La clave idempotente por hash de
+  contenido (`raw/yyyy/MM/dd/{sha256}.json`, AUD-016) **no cambia de semántica** (hash sobre el cuerpo
+  NDJSON, sigue determinista). Cambio compartido con el `S3RawEventArchive` heredado (Athena también
+  consume line-delimited, así que el camino AWS congelado sigue válido). `IRawEventArchive` es **solo
+  escritura** → ningún lector de la app esperaba el array (verificado), el cambio es seguro.
+- **Setup BigQuery reproducible** ([scripts/bigquery-setup.mjs](./scripts/bigquery-setup.mjs),
+  `@google-cloud/bigquery`): crea el dataset `atalaya_analytics` + la external table `telemetry_raw`
+  (esquema explícito camelCase, `ignoreUnknownValues`), idempotente. Sin gcloud/bq CLI (acepta ruta de
+  service account key, como `set-role.mjs` en G3). Ubicación configurable (`BQ_LOCATION`, default `US`)
+  porque la external table exige que el dataset esté en la **misma ubicación** que el bucket.
+- **Endpoint `/api/analytics/devices?minutes&limit`** ([BigQueryAnalyticsQuery.cs](./apps/api/Services/BigQueryAnalyticsQuery.cs)
+  / [IAnalyticsQuery.cs](./apps/api/Services/IAnalyticsQuery.cs)): agregados por dispositivo (conteo,
+  vel. media/máx, temp máx, combustible mín) desde el lake vía BigQuery. Mismo **RBAC de lectura**
+  (`Secured`) que `/api/devices|history`. Se registra **solo si hay dataset configurado**
+  (`Gcp:DatasetId`) → ausente en base/tests (sin dependencia de BigQuery). El cliente usa ADC.
+
+### Hallazgos
+
+| Sev | Hallazgo | Acción | Estado |
+|-----|----------|--------|--------|
+| 🟢  | BigQuery lee el lake directamente (Athena-equivalente) tras pasar a NDJSON | External table `NEWLINE_DELIMITED_JSON` + endpoint tras `IAnalyticsQuery` | Resuelto |
+| 🟠  | **Costo desbocado (revisión crítica G4):** el layout `yyyy/MM/dd` **no es hive** → no hay poda de particiones; cada consulta escanea **todo el lake** y BigQuery es pay-per-byte → una query desmedida factura sin tope | **Cost guard** `MaximumBytesBilled` (config `Gcp:AnalyticsMaxBytesBilled`, default 1 GB): BigQuery **rechaza** la consulta en vez de facturarla | Resuelto |
+| 🟡  | El bucket real `atalaya-datalake` **no existía** (G2 se verificó contra fake-gcs) | El worker lo **auto-crea** al arrancar contra GCS real (`EnsureBucketAsync`); confirmado E2E | Resuelto |
+| 🔵  | Un lake ya poblado con objetos en formato array previo quedaría ilegible para la external table (mezcla array+NDJSON) | No aplica aquí (lake real arrancó vacío); a futuro = reprocesar/migrar objetos viejos | Aceptado (N/A hoy) |
+| 🔵  | Sin poda de particiones, a gran escala el escaneo total encarece; migrar a layout hive (`dt=YYYY-MM-DD`) lo resolvería (tocaría `RawEventKey`, compartido con S3) | Documentado; aceptable a escala dev/free-tier con el cost guard | Aceptado (por diseño) |
+
+### Verificaciones
+
+- [x] `dotnet build Atalaya.sln` ✅ · `nx test api-tests` **43/43** (test nuevo: el cuerpo del lake es
+      NDJSON, una línea por evento parseable).
+- [x] **E2E contra GCP real** (`fabian-portafolio`, key de service account): worker en modo Gcp →
+      **GCS real** (no fake-gcs): bucket `atalaya-datalake` auto-creado, **objetos NDJSON** bajo
+      `raw/2026/06/24/{sha256}.json` (un evento por línea, camelCase, parseable). El script creó
+      `atalaya_analytics.telemetry_raw`. El endpoint `/api/analytics/devices` devolvió **agregados por
+      dispositivo reales** leídos por BigQuery de la external table (cadena worker→GCS→BigQuery→endpoint).
+- [x] **IAM de mínimo privilegio (runtime) descubierto E2E**: la SA `bq-query-service` necesitó, en
+      orden, `bigquery.jobs.create` (lanzar query) + `storage.objects.list/get` sobre el bucket (leer
+      el lake que la external table referencia) además de leer la tabla. Set final:
+      `roles/bigquery.jobUser` + `roles/bigquery.dataViewer` + `roles/storage.objectViewer`.
+- [x] **Cost guard**: tras añadir `MaximumBytesBilled` (1 GB) el endpoint sigue devolviendo datos
+      (la query escanea bytes mínimos); una consulta que excediera el tope sería rechazada por BigQuery.
+
+### Conclusión
+
+La analítica fría ya es real en GCP: BigQuery consulta el data lake **directamente** (external table
+sobre NDJSON), cerrando el equivalente a Athena, y el dashboard tiene una superficie nueva
+(`/api/analytics`) detrás del mismo RBAC. La **revisión crítica** añadió un **cost guard** imprescindible
+para un servicio pay-per-byte sin poda de particiones. El E2E además sirvió para **fijar el IAM de
+runtime de mínimo privilegio** de la SA de consulta. Queda **G5** (Terraform + Cloud Run + Firebase
+Hosting) y **G6** (medición real + teardown).
+
+**Veredicto:** ✅ G4 cerrada y verificada E2E contra BigQuery real (incluida la revisión crítica y el cost guard).
+
+⚠️ **Artefactos reales creados** (vigilar budget, limpiar en G6): bucket `gs://atalaya-datalake`,
+dataset `fabian-portafolio.atalaya_analytics` + external table `telemetry_raw`. El free-tier de BigQuery
+(1 TB consultas/mes) cubre dev de sobra.
+
+---
+
 ## AUD-023 — Pivote a GCP · G3: auth OIDC real con Identity Platform (2026-06-24)
 
 **Fase:** Pivote a GCP ([ADR-013](./SAD-Atalaya.md)), **fase G3** del roadmap de [AUD-020](#aud-020--decisión-pivote-de-nube-aws--gcp-2026-06-23). Primer servicio GCP **real** (no emulado).

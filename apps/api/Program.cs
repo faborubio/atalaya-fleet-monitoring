@@ -8,6 +8,7 @@ using Atalaya.Contracts;
 using Atalaya.Persistence;
 using Atalaya.Realtime;
 using Google.Api.Gax;
+using Google.Cloud.BigQuery.V2;
 using Google.Cloud.PubSub.V1;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.RateLimiting;
@@ -112,6 +113,16 @@ else
     builder.Services.AddHostedService<TelemetryProcessor>();
 }
 
+// Analítica con BigQuery sobre el data lake (G4, ADR-013). Se registra solo si hay dataset
+// configurado (Gcp:DatasetId) → ausente en base/tests (sin dependencia de BigQuery). El cliente usa
+// ADC (en dev, GOOGLE_APPLICATION_CREDENTIALS apunta a la service account de consulta).
+var gcpAnalytics = builder.Configuration.GetSection("Gcp").Get<GcpOptions>() ?? new GcpOptions();
+if (gcpAnalytics.AnalyticsEnabled)
+{
+    builder.Services.AddSingleton<IAnalyticsQuery>(_ =>
+        new BigQueryAnalyticsQuery(BigQueryClient.Create(gcpAnalytics.ProjectId), gcpAnalytics));
+}
+
 const string DevCors = "atalaya-dev";
 builder.Services.AddCors(options => options.AddPolicy(DevCors, policy => policy
     .WithOrigins("http://localhost:4200")
@@ -204,6 +215,19 @@ Secured(app.MapGet("/api/history", async (
     var points = await archive.QueryAsync(deviceId, from, to, Math.Clamp(limit, 1, 5000), ct);
     return Results.Ok(points);
 }));
+
+// Analítica (camino frío, ADR-005/007, fase G4): agregados por dispositivo desde el data lake vía
+// BigQuery. Solo existe si hay dataset configurado; mismo RBAC de lectura que el resto de lecturas.
+if (gcpAnalytics.AnalyticsEnabled)
+{
+    Secured(app.MapGet("/api/analytics/devices", async (
+        IAnalyticsQuery analytics, CancellationToken ct, int minutes = 60, int limit = 50) =>
+    {
+        var from = DateTimeOffset.UtcNow.AddMinutes(-Math.Clamp(minutes, 1, 7 * 24 * 60));
+        var rows = await analytics.DeviceAggregatesAsync(from, Math.Clamp(limit, 1, 500), ct);
+        return Results.Ok(rows);
+    }));
+}
 
 // Hub de deltas en vivo (ADR-002). En modo auth, exige la misma read policy (token por query string).
 var telemetryHub = app.MapHub<TelemetryHub>("/hubs/telemetry");

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Atalaya.Contracts;
 using Atalaya.Persistence;
 using Xunit;
@@ -5,9 +6,10 @@ using Xunit;
 namespace Atalaya.Api.Tests;
 
 /// <summary>
-/// Clave idempotente del data lake S3 (<see cref="RawEventKey"/>, AUD-015 p3): el mismo lote
+/// Clave idempotente del data lake (<see cref="RawEventKey"/>, AUD-015 p3): el mismo lote
 /// produce siempre la misma clave (reentrega = sobrescritura, no duplicado); contenido distinto,
-/// clave distinta; la partición sale del evento más antiguo.
+/// clave distinta; la partición sale del evento más antiguo. El cuerpo es <b>NDJSON</b> (un evento
+/// por línea, AUD-024/G4) para que BigQuery lo lea como filas.
 /// </summary>
 public sealed class RawEventKeyTests
 {
@@ -43,5 +45,24 @@ public sealed class RawEventKeyTests
 
         Assert.StartsWith("raw/2026/06/21/", key);
         Assert.EndsWith(".json", key);
+    }
+
+    [Fact]
+    public void El_cuerpo_es_ndjson_una_linea_por_evento()
+    {
+        var ts = new DateTimeOffset(2026, 6, 22, 10, 0, 0, TimeSpan.Zero);
+        var (_, body) = RawEventKey.Build(new[]
+        {
+            Event("e1", ts), Event("e2", ts.AddSeconds(1)), Event("e3", ts.AddSeconds(2)),
+        });
+
+        var lines = body.Split('\n');
+        Assert.Equal(3, lines.Length);
+        // Cada línea es un objeto JSON independiente (no un array): empieza con '{' y deserializa.
+        Assert.All(lines, line =>
+        {
+            Assert.StartsWith("{", line);
+            Assert.NotNull(JsonSerializer.Deserialize<TelemetryEvent>(line));
+        });
     }
 }

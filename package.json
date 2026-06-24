@@ -26,6 +26,7 @@
     "zone.js": "~0.15.0"
   },
   "devDependencies": {
+    "@google-cloud/bigquery": "^7.9.0",
     "firebase-admin": "^13.0.0",
     "@angular-devkit/core": "~20.3.0",
     "@angular-devkit/schematics": "~20.3.0",

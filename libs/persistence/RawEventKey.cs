@@ -6,19 +6,27 @@ using Atalaya.Contracts;
 namespace Atalaya.Persistence;
 
 /// <summary>
-/// Deriva la clave del objeto del data lake S3 de forma <b>determinista por contenido</b>
+/// Deriva la clave del objeto del data lake de forma <b>determinista por contenido</b>
 /// (AUD-015 punto 3): <c>raw/yyyy/MM/dd/{sha256(body)}.json</c>. Así, una reentrega del mismo
-/// lote (at-least-once) produce la misma clave y el <c>PutObject</c> sobrescribe en vez de crear
-/// un duplicado. La fecha de partición sale del evento más antiguo del lote (también determinista).
+/// lote (at-least-once) produce la misma clave y la subida sobrescribe en vez de crear un
+/// duplicado. La fecha de partición sale del evento más antiguo del lote (también determinista).
+/// <para>
+/// El cuerpo se escribe como <b>NDJSON</b> (un evento JSON por línea, AUD-024 / fase G4): es el
+/// formato que <b>BigQuery</b> lee con una <i>external table</i> <c>NEWLINE_DELIMITED_JSON</c>
+/// directamente sobre el bucket. (También es el formato line-delimited que consume Athena, así que
+/// el camino S3 heredado sigue siendo válido.) El hash sobre el cuerpo NDJSON sigue siendo
+/// determinista, de modo que la clave idempotente no cambia de semántica.
+/// </para>
 /// </summary>
 public static class RawEventKey
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-    /// <summary>Serializa el lote (cuerpo del objeto) y calcula su clave idempotente.</summary>
+    /// <summary>Serializa el lote como NDJSON (un evento por línea) y calcula su clave idempotente.</summary>
     public static (string Key, string Body) Build(IReadOnlyList<TelemetryEvent> events)
     {
-        var body = JsonSerializer.Serialize(events, Json);
+        // NDJSON: una línea por evento → BigQuery (NEWLINE_DELIMITED_JSON) lee cada línea como una fila.
+        var body = string.Join('\n', events.Select(e => JsonSerializer.Serialize(e, Json)));
         return (KeyFor(events, body), body);
     }
 

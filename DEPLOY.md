@@ -109,6 +109,33 @@ Recursos (SNS/SQS/DLQ/S3 + suscripción) los crea automáticamente
 > El objetivo (ADR-009) es definir estos recursos con **AWS CDK**; hoy se crean con
 > `awslocal` para tener el pipeline ya corriendo.
 
+### 1.7 Analítica con BigQuery (modo Gcp, G4) — ✅ disponible
+
+No hay emulador de BigQuery → se valida contra **BigQuery real** (free-tier 1 TB consultas/mes
+cubre dev; mantener Budget+Alert). El data lake en GCS se escribe en **NDJSON** (un evento por
+línea), que la external table lee directamente.
+
+```bash
+# 0) Consola GCP (una vez): habilitar BigQuery API + Budget/Alert. La SA de consulta necesita
+#    bigquery.jobUser + bigquery.dataViewer + storage.objectViewer (sobre el bucket del lake).
+# 1) Poblar el lake real (worker en modo Gcp contra GCS real, no fake-gcs):
+$env:GOOGLE_APPLICATION_CREDENTIALS="C:\ruta\sa-key.json"
+$env:Telemetry__Transport="Gcp"; $env:Gcp__ProjectId="fabian-portafolio"; $env:Gcp__StorageEmulatorHost=""
+npx nx serve worker      # auto-crea el bucket atalaya-datalake si falta
+# (API en modo Gcp + simulador, como en §1.5 pero con Transport=Gcp)
+
+# 2) Crear dataset + external table (idempotente; BQ_LOCATION = ubicación del bucket):
+$env:BQ_LOCATION="US"
+node scripts/bigquery-setup.mjs fabian-portafolio atalaya-datalake atalaya_analytics "C:\ruta\sa-key.json"
+
+# 3) API con analítica activa + consulta:
+$env:Gcp__DatasetId="atalaya_analytics"; npx nx serve api
+curl "http://localhost:3000/api/analytics/devices?minutes=60&limit=10"
+```
+> **Cost guard (AUD-024):** la external table no tiene poda de particiones (layout `yyyy/MM/dd`,
+> no hive) → cada query escanea todo el lake. `Gcp:AnalyticsMaxBytesBilled` (default 1 GB) hace que
+> BigQuery **rechace** una consulta que exceda el tope en vez de facturarla.
+
 ---
 
 ## 2. Despliegue en AWS ⛔ *(planificado, no implementado)*

@@ -32,6 +32,7 @@ export class AuthService {
   private expiresAt = 0; // epoch ms de expiración del token vigente (dev y firebase)
   private firebaseAuth?: Auth;
   private user: User | null = null;
+  private devRole = 'operador'; // rol elegido para /auth/dev-token (modos dev y demo)
 
   /** Rol del usuario (de `/auth/dev-token` o del custom claim de Firebase). */
   readonly role = signal<string | null>(null);
@@ -50,8 +51,25 @@ export class AuthService {
       await this.initFirebase();
     } else if (this.config.mode === 'dev') {
       await this.refreshDevToken();
+    } else if (this.config.mode === 'demo') {
+      // No auto-loguea: el shell muestra el login y el usuario entra con un clic (loginDemo).
+      this.authenticated.set(false);
     } else {
       this.authenticated.set(true); // disabled: sin auth, entra directo
+    }
+  }
+
+  /**
+   * Login de un clic para la demo de portafolio (modo `demo`, ADR-014): adquiere un token dev con el
+   * rol elegido y entra. Lanza con un mensaje legible si el backend no responde.
+   */
+  async loginDemo(role: 'operador' | 'admin'): Promise<void> {
+    this.error.set(null);
+    this.devRole = role;
+    await this.refreshDevToken();
+    if (!this.authenticated()) {
+      this.error.set('No se pudo conectar con la API de demo. Intenta de nuevo.');
+      throw new Error('demo-login-failed');
     }
   }
 
@@ -72,7 +90,7 @@ export class AuthService {
       if (this.user) this.token = await this.user.getIdToken();
       return this.token ?? '';
     }
-    if (this.config.mode === 'dev') {
+    if (this.config.mode === 'dev' || this.config.mode === 'demo') {
       if (!this.token || Date.now() > this.expiresAt - 30_000) await this.refreshDevToken();
     }
     return this.token ?? '';
@@ -93,6 +111,14 @@ export class AuthService {
   }
 
   async signOut(): Promise<void> {
+    if (this.config.mode === 'demo' || this.config.mode === 'dev') {
+      // Demo/dev: limpia el token local y vuelve al login (no hay sesión remota que cerrar).
+      this.token = null;
+      this.expiresAt = 0;
+      this.role.set(null);
+      this.authenticated.set(false);
+      return;
+    }
     if (!this.firebaseAuth) return;
     const { signOut } = await import('firebase/auth');
     await signOut(this.firebaseAuth);
@@ -136,7 +162,7 @@ export class AuthService {
     try {
       const res = await firstValueFrom(
         this.http.get<DevTokenResponse>(`${this.apiConfig.baseUrl}/auth/dev-token`, {
-          params: { role: 'operador' },
+          params: { role: this.devRole },
         })
       );
       this.token = res.token;

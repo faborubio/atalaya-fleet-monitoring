@@ -31,8 +31,8 @@ export class App {
     { path: 'history', label: 'Históricos' },
   ] as const;
 
-  /** En modo firebase la app exige login; en dev/disabled entra directo. */
-  private readonly requiresLogin = this.auth.mode === 'firebase';
+  /** En modo firebase y demo la app exige login; en dev/disabled entra directo. */
+  private readonly requiresLogin = this.auth.mode === 'firebase' || this.auth.mode === 'demo';
   protected readonly canSignOut = this.requiresLogin;
   protected readonly showApp = computed(() => !this.requiresLogin || this.auth.authenticated());
 

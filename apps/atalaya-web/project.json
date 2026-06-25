@@ -44,6 +44,19 @@
           "optimization": false,
           "extractLicenses": false,
           "sourceMap": true
+        },
+        "demo": {
+          "budgets": [
+            { "type": "initial", "maximumWarning": "500kb", "maximumError": "1mb" },
+            { "type": "anyComponentStyle", "maximumWarning": "4kb", "maximumError": "8kb" }
+          ],
+          "outputHashing": "all",
+          "fileReplacements": [
+            {
+              "replace": "apps/atalaya-web/src/app/core/deploy-target.ts",
+              "with": "apps/atalaya-web/src/app/core/deploy-target.demo.ts"
+            }
+          ]
         }
       },
       "defaultConfiguration": "production"
@@ -57,6 +70,9 @@
         },
         "development": {
           "buildTarget": "atalaya-web:build:development"
+        },
+        "demo": {
+          "buildTarget": "atalaya-web:build:demo"
         }
       },
       "defaultConfiguration": "development"

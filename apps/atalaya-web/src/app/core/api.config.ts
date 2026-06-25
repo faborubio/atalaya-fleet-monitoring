@@ -27,3 +27,15 @@ export const prodApiConfig: ApiConfig = {
   baseUrl: PROD_API_BASE_URL,
   hubUrl: `${PROD_API_BASE_URL}/hubs/telemetry`,
 };
+
+/**
+ * Demo de portafolio always-on (ADR-014, Nivel 1, ver DEMO.md): un único Cloud Run InMemory con el
+ * generador de datos. **Rellena `DEMO_API_BASE_URL` con el output `demo_api_url` del `terraform apply`
+ * de `infra/terraform-demo/` antes del `nx build atalaya-web --configuration=demo` + `firebase deploy`.**
+ * La selección la hace el build `demo` (fileReplacements de `deploy-target.ts`).
+ */
+const DEMO_API_BASE_URL = 'https://REEMPLAZAR-con-demo_api_url-de-cloud-run.run.app';
+export const demoApiConfig: ApiConfig = {
+  baseUrl: DEMO_API_BASE_URL,
+  hubUrl: `${DEMO_API_BASE_URL}/hubs/telemetry`,
+};

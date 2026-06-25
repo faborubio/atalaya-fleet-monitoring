@@ -3,9 +3,12 @@ import { FormsModule } from '@angular/forms';
 import { AuthService } from '../../core/auth/auth.service';
 
 /**
- * Pantalla de login (G3): email/password contra Identity Platform (Firebase Auth). Solo se muestra
- * en modo `firebase`; en `dev`/`disabled` el dashboard entra directo. Tras autenticar, el shell
- * (`App`) detecta `authenticated()` y arranca el camino caliente.
+ * Pantalla de login. Dos variantes según el modo de auth (`AuthService.mode`):
+ * - `firebase` (G3): email/password contra Identity Platform.
+ * - `demo` (ADR-014): login de **un clic** con selector de rol — entra contra el backend en modo
+ *   Auth:Dev sin pedir credenciales (luce el JWT+RBAC en el portafolio sin fricción para el reclutador).
+ * En `dev`/`disabled` el dashboard entra directo y esta pantalla no se muestra. Tras autenticar, el
+ * shell (`App`) detecta `authenticated()` y arranca el camino caliente.
  */
 @Component({
   selector: 'app-login',
@@ -13,28 +16,52 @@ import { AuthService } from '../../core/auth/auth.service';
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="login">
-      <form class="login__card" (ngSubmit)="submit()">
-        <h1 class="login__brand">Atalaya</h1>
-        <p class="login__sub">Inicia sesión para ver la flota en vivo</p>
+      @if (auth.mode === 'demo') {
+        <div class="login__card">
+          <h1 class="login__brand">🗼 Atalaya</h1>
+          <p class="login__sub">Monitoreo de flota en tiempo real — demo en vivo</p>
 
-        <label class="login__field">
-          <span>Email</span>
-          <input type="email" name="email" [(ngModel)]="email" autocomplete="username" required />
-        </label>
-        <label class="login__field">
-          <span>Contraseña</span>
-          <input type="password" name="password" [(ngModel)]="password"
-                 autocomplete="current-password" required />
-        </label>
+          <label class="login__field">
+            <span>Entrar como</span>
+            <select name="role" [(ngModel)]="role">
+              <option value="operador">Operador (solo lectura)</option>
+              <option value="admin">Administrador</option>
+            </select>
+          </label>
 
-        @if (auth.error()) {
-          <p class="login__error">{{ auth.error() }}</p>
-        }
+          @if (auth.error()) {
+            <p class="login__error">{{ auth.error() }}</p>
+          }
 
-        <button class="login__btn" type="submit" [disabled]="busy()">
-          {{ busy() ? 'Entrando…' : 'Entrar' }}
-        </button>
-      </form>
+          <button class="login__btn" type="button" [disabled]="busy()" (click)="enterDemo()">
+            {{ busy() ? 'Entrando…' : 'Entrar a la demo' }}
+          </button>
+          <p class="login__note">Sesión de demostración con datos sintéticos · JWT + RBAC reales.</p>
+        </div>
+      } @else {
+        <form class="login__card" (ngSubmit)="submit()">
+          <h1 class="login__brand">Atalaya</h1>
+          <p class="login__sub">Inicia sesión para ver la flota en vivo</p>
+
+          <label class="login__field">
+            <span>Email</span>
+            <input type="email" name="email" [(ngModel)]="email" autocomplete="username" required />
+          </label>
+          <label class="login__field">
+            <span>Contraseña</span>
+            <input type="password" name="password" [(ngModel)]="password"
+                   autocomplete="current-password" required />
+          </label>
+
+          @if (auth.error()) {
+            <p class="login__error">{{ auth.error() }}</p>
+          }
+
+          <button class="login__btn" type="submit" [disabled]="busy()">
+            {{ busy() ? 'Entrando…' : 'Entrar' }}
+          </button>
+        </form>
+      }
     </div>
   `,
   styles: [
@@ -48,11 +75,12 @@ import { AuthService } from '../../core/auth/auth.service';
       .login__brand { margin: 0; font-size: 1.6rem; letter-spacing: 0.04em; }
       .login__sub { margin: 0 0 0.5rem; color: #8aa0c8; font-size: 0.9rem; }
       .login__field { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; }
-      .login__field input {
+      .login__field input, .login__field select {
         padding: 0.55rem 0.7rem; border-radius: 8px; border: 1px solid #2c3a59;
         background: #0d1424; color: #e8eefc;
       }
       .login__error { margin: 0; color: #ff8080; font-size: 0.85rem; }
+      .login__note { margin: 0.25rem 0 0; color: #6b7fa6; font-size: 0.75rem; text-align: center; }
       .login__btn {
         margin-top: 0.5rem; padding: 0.6rem; border: 0; border-radius: 8px; cursor: pointer;
         background: #3b82f6; color: white; font-weight: 600;
@@ -65,6 +93,7 @@ export class Login {
   protected readonly auth = inject(AuthService);
   protected email = '';
   protected password = '';
+  protected role: 'operador' | 'admin' = 'operador';
   protected readonly busy = signal(false);
 
   async submit(): Promise<void> {
@@ -72,6 +101,19 @@ export class Login {
     this.busy.set(true);
     try {
       await this.auth.signIn(this.email, this.password);
+    } catch {
+      // el mensaje ya está en auth.error()
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  /** Login de un clic para la demo (ADR-014): entra con el rol elegido. */
+  async enterDemo(): Promise<void> {
+    if (this.busy()) return;
+    this.busy.set(true);
+    try {
+      await this.auth.loginDemo(this.role);
     } catch {
       // el mensaje ya está en auth.error()
     } finally {

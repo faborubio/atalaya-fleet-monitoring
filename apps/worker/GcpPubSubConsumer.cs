@@ -17,6 +17,7 @@ namespace Atalaya.Worker;
 public sealed class GcpPubSubConsumer(
     GcpOptions options,
     TelemetryBatchProcessor processor,
+    IPoisonQuarantine quarantine,
     WorkerMetrics metrics,
     ILogger<GcpPubSubConsumer> logger) : BackgroundService
 {
@@ -56,6 +57,9 @@ public sealed class GcpPubSubConsumer(
             {
                 logger.LogError(ex, "Mensaje Pub/Sub envenenado (no deserializa); se descarta");
                 metrics.AddPoison(1);
+                // Copia forense antes de descartar (AUDIT §6.13): el bucle ya está roto por el Ack;
+                // esto guarda el payload malo para diagnosticar el firmware/dispositivo culpable.
+                await quarantine.QuarantineAsync(msg.Data.Memory, ex.Message, ct);
                 return SubscriberClient.Reply.Ack;
             }
 

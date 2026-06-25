@@ -21,6 +21,7 @@ builder.Services.AddAtalayaPersistence(builder.Configuration);
 builder.Services.AddAtalayaRedis(builder.Configuration);
 builder.Services.AddSingleton<TelemetryBatchProcessor>(); // lógica de lote común a todos los brokers
 builder.Services.AddHostedService<WorkerHealthService>();  // health/live + health/ready (Fase 3)
+builder.Services.AddSingleton<IPoisonQuarantine, NullPoisonQuarantine>(); // default; Gcp lo sobreescribe
 
 // Retención del camino frío (AUD-015 p2): dropea particiones viejas de telemetry.
 builder.Services.AddSingleton(
@@ -49,6 +50,7 @@ if (useGcp)
         }.Build()
         : StorageClient.Create());
     builder.Services.AddSingleton<IRawEventArchive, GcsRawEventArchive>();
+    builder.Services.AddSingleton<IPoisonQuarantine, GcsPoisonQuarantine>(); // cuarentena forense (AUDIT §6.13)
     builder.Services.AddSingleton<IWorkerReadiness, PubSubReadiness>();
     builder.Services.AddHostedService<GcpPubSubConsumer>();
 }

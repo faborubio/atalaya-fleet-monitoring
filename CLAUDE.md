@@ -56,7 +56,7 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
 
 ## 5. Estado actual
 
-**Fecha de actualización:** 2026-06-25 (G5b desplegado y verificado E2E en GCP real; solo queda el teardown)
+**Fecha de actualización:** 2026-06-25 (G5b hecho+teardown · demo Nivel 1 EN VIVO + Nivel 2 implementado · auto-auditoría de casos borde con 6.11/6.13 hechos)
 **Fase:** 1 + 1.5 + ingesta desacoplada ([AUD-010](./AUDIT.md)) + **Fase 2 completa** (alertas
 [AUD-011](./AUDIT.md) + camino frío [AUD-012](./AUDIT.md)) + **productivización** (CDK
 [AUD-013](./AUDIT.md) + viewport [AUD-014](./AUDIT.md)) + **Fase 2.5 calidad de datos**
@@ -265,11 +265,24 @@ adquiere solo. Lecturas sin token → 401; con rol operador/admin → 200.
 ### Pendiente (próxima sesión)
 **No quedan ítems de features, backlog ni fases del pivote** — todo completo y verificado E2E, **G5b incluido**
 ([AUD-031](./AUDIT.md)) y ya **con teardown hecho** (el stack completo se destruyó; no cobra).
-**Demo de portafolio (ADR-014, [DEMO.md](./DEMO.md)):** **Nivel 1 DESPLEGADO Y EN VIVO** (~$0, scale-to-zero)
-— SPA `https://atalaya-demo.web.app`, API `https://atalaya-demo-api-aqeprs2exa-uc.a.run.app`, IaC en
-`infra/terraform-demo/` (estado propio). Operación en DEMO.md §1.7. **Pendiente (opcional):** Nivel 2
-(stack efímero con `demo-up`/`demo-down`). Pendiente menor del usuario: revisar el bloque de **casos borde**
-que añadió al final de `AUDIT.md` (secciones 1–6).
+
+**Demo de portafolio (ADR-014, [DEMO.md](./DEMO.md)):**
+- **Nivel 1 DESPLEGADO Y EN VIVO** (~$0, scale-to-zero) — SPA `https://atalaya-demo.web.app`, API
+  `https://atalaya-demo-api-aqeprs2exa-uc.a.run.app`, IaC en `infra/terraform-demo/`. Operación en DEMO.md §1.7.
+- **Nivel 2 implementado y validado con `plan`** (scripts `infra/demo-up.ps1`/`demo-down.ps1`, sitio
+  `atalaya-live`, `firebase.json` multi-sitio) — **falta solo el ensayo pagado** (up real → smoke → down).
+
+**Casos borde / auto-auditoría ([AUDIT.md](./AUDIT.md) "Revisión Arquitectónica", secciones 1–9):** revisión
+verificada-contra-código de los 14 puntos del usuario (§1–6); **mayoría ya mitigados**. Hechos a raíz de eso:
+**6.11** reconnect SignalR con backoff+jitter y **6.13** cuarentena forense de veneno (`IPoisonQuarantine`).
+**Pendiente de revisar mañana:** los casos nuevos que añadió el usuario (**§7.15–7.16, §8.17–8.18**) y los que
+detectó Claude por código (**§9.19–9.21**) — varios con mitigación parcial probable (p.ej. 8.18 particiones
+perezosas, 7.16 at-least-once); confirmarlos contra el código y decidir documentar vs implementar.
+
+**Agenda acordada para mañana (sesión nueva):** (1) **ensayo pagado del Nivel 2** (`demo-up` → consola GCP →
+`demo-down`, ~US$1–2, ~25 min); (2) **arreglos visuales** del dashboard; (3) **revisar los casos borde
+§7–§9** de AUDIT.md. Nota: la demo Nivel 1 tomará el fix 6.11 en su próximo redeploy (`nx build
+--configuration=demo` + `firebase deploy --only hosting:atalaya-demo`).
 
 Backlog AWS-era **todo cerrado** (referencia rápida):
 - ✅ Mapa deck.gl + virtual scroll ([AUD-026](./AUDIT.md)) · ✅ DLQ replay ([AUD-027](./AUDIT.md)) ·

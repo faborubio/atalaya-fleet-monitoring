@@ -1749,3 +1749,56 @@ espera de prerequisitos.
   2. Forzar que BigQuery rechace cualquier consulta que no incluya un filtro `WHERE` sobre la columna de partición (fecha).
   3. (Ya tienes algo genial aquí: mencionas en AUD-024 un límite `MaximumBytesBilled`, ¡asegúrate de que esté configurado a un nivel estricto en la API!).
 * **🟡 Estado real (verificado 2026-06-25):** El punto 3 **ya está hecho**: `Gcp:AnalyticsMaxBytesBilled` (default 1 GB) se pasa como `MaximumBytesBilled` y BigQuery **rechaza** (no factura) cualquier query que lo exceda ([`GcpOptions.cs`](./apps/api/Services/GcpOptions.cs) L34, [AUD-024](#aud-024)). Faltan los puntos 1 y 2: **hive partitioning** (layout `year=/month=/day=`) y **exigir filtro de partición**. Hoy una query mala se **corta en el tope** pero igual escanea hasta ahí. Mejora real anotada (requiere cambiar el layout del lake + el setup de la tabla externa).
+
+7. Lógica de Dominio y Consistencia
+7.15. El "Camión Anfibio" (El problema matemático del Downsampling)
+Contexto: En tu Fase 1.0.8 (AUD-028) implementaste downsampling del histórico agregando por buckets de tiempo y haciendo un "promedio por intervalo".
+
+El Riesgo: Promediar métricas continuas (como velocidad, temperatura o combustible) es perfecto. Pero nunca puedes promediar coordenadas GPS (Latitud/Longitud). Si un vehículo hace una ruta en forma de "U" bordeando un lago durante un intervalo de 5 minutos, el promedio matemático de esos puntos dará como resultado una coordenada exactamente en medio del lago. En el frontend, la línea del historial cruzará por encima del agua o de edificios.
+
+Mitigación propuesta: El algoritmo de agregación (ITelemetryArchive.QueryDownsampledAsync) debe diferenciar el tipo de dato. Para las métricas, usa promedios (AVG). Para las coordenadas espaciales, debe tomar siempre el último punto del intervalo (o el primero), o aplicar un algoritmo de simplificación de geometría espacial como Douglas-Peucker.
+
+7.16. El "Split-Brain" (Desfase entre Base de Datos y UI)
+Contexto: El Worker .NET consume de Pub/Sub, actualiza Postgres (device_state) y luego emite el delta a SignalR.
+
+El Riesgo: ¿Qué pasa si la escritura en Postgres es exitosa, pero justo en ese milisegundo el worker crashea por falta de memoria o Pub/Sub reinicia el contenedor antes de hacer el envío a SignalR? El mensaje se da por procesado (ACK). La base de datos tiene la ubicación actualizada, pero el cliente web (Angular) nunca recibe el push. El tablero en vivo queda desactualizado silenciosamente hasta que el camión envíe su siguiente punto.
+
+Mitigación propuesta: Si bien implementar un patrón Outbox completo puede ser muy complejo para el alcance actual, la solución pragmática es que el cliente Angular tenga un temporizador de "Stale Data". Si no recibe un delta de un dispositivo visible en X segundos, fuerza un refresco silencioso (GET /api/devices/{id}) para re-sincronizar su estado con la base de datos.
+
+8. Resiliencia Operativa
+8.17. Tormentas de Alertas por "Flapping" (Cascading Alarms)
+Contexto: Manejas incidentes con histéresis (abrir/escalar/resolver) según el AUD-017.
+
+El Riesgo: Un sensor de velocidad está defectuoso y oscila entre 0 km/h y 120 km/h cada medio segundo. Aunque tengas histéresis, si la regla es "velocidad > 100", el sistema abrirá y cerrará incidentes cientos de veces por minuto. Esto inundará tu tabla alert_incidents, sobresaturará el Hub de SignalR con alertas rojas y volverá loco al operador.
+
+Mitigación propuesta: Implementar un período de Cooldown (Enfriamiento) en las reglas de alerta. Por ejemplo, una vez que un incidente se resuelve, no se puede volver a abrir por la misma regla en el mismo dispositivo durante al menos 5 minutos, ignorando temporalmente la telemetría ruidosa.
+
+8.18. El Colapso del "Día 31" (El Abismo de las Particiones)
+Contexto: Tu telemetría está particionada por tiempo en PostgreSQL para poder hacer retención O(1) con DROP PARTITION (ADR-007).
+
+El Riesgo: ¿Quién crea las nuevas particiones del futuro? Si tienes un script o un job que crea la partición de mañana a la medianoche, y ese proceso falla silenciosamente (por un error de red, o porque el contenedor que corre el cron se apagó), los workers intentarán insertar la telemetría del día siguiente. Postgres rechazará la inserción con un error de "no partition found for routing". Toda tu ingesta crasheará de golpe y la DLQ se llenará en segundos.
+
+Mitigación propuesta: El sistema debe pre-crear las particiones con un margen de seguridad amplio (ej. 7 a 14 días en el futuro). Además, configurar una alerta de infraestructura que avise si el "colchón" de particiones futuras cae por debajo de 3 días.
+
+---
+
+## 9. Casos borde detectados por análisis de código (Claude) — ⏳ pendientes de revisión conjunta
+
+> Hallados leyendo el código durante la auto-auditoría del 2026-06-25. Llevan un **análisis preliminar**
+> verificado contra el código, pero la decisión (documentar vs implementar) se toma **junto al usuario**
+> en la próxima sesión. Numerados a partir de 9.19 para no chocar con los anteriores.
+
+### 9.19. Reinicio de dispositivo reinicia el `seq` (el reverso del §1.1)
+* **Contexto:** el orden y la idempotencia se basan en `seq` (secuencia por dispositivo): `WHERE EXCLUDED.seq >= device_state.seq` en el upsert, y `d.seq >= current.seq` en el front.
+* **El Riesgo:** si un dispositivo se reinicia (corte de energía/firmware) y su `seq` vuelve a empezar en 1, el guard **descartará** todos sus eventos nuevos (seq bajo) hasta que el contador vuelva a superar el `seq` máximo previo. El vehículo se "congela" en el mapa aunque esté reportando.
+* **Análisis preliminar:** real, pero requiere un dispositivo que reinicie su contador (el simulador no lo hace, así que no se ve en demo). **Mitigación:** un `boot-id`/epoch por dispositivo (resetea la línea de comparación al detectar boot nuevo), o aceptar el evento si su `ts` es claramente más reciente aunque el `seq` baje. **Voto:** documentar; implementar solo si se modela el ciclo de vida real del dispositivo.
+
+### 9.20. Durabilidad del borde de ingesta (el 202 es previo a la durabilidad)
+* **Contexto:** `/ingest` encola en un canal en memoria (`QueueingTelemetryPublisher`) y responde **202** antes de publicar al broker (desacople de AUD-010).
+* **El Riesgo:** si la API muere con eventos en el buffer en RAM (crash/SIGKILL sin gracia), esa ventana se **pierde** silenciosamente — el cliente ya recibió 202. El graceful shutdown drena en apagado ordenado, pero no cubre un kill duro.
+* **Análisis preliminar:** ya anotado como deuda consciente (AUD-010/015 B). **Mitigación real:** ingesta serverless durable en el borde (API Gateway/Cloud Run → publica directo a Pub/Sub y responde tras el ack del broker), a cambio de latencia. **Voto:** documentar; es un trade-off de diseño consciente, no un bug.
+
+### 9.21. Replay de la DLQ ante fallos transitorios no recuperados
+* **Contexto:** `POST /api/admin/dlq/replay` re-encola los dead-letters al topic principal (ADR-006).
+* **El Riesgo:** si los mensajes cayeron a la DLQ por un fallo **transitorio aún vigente** (p.ej. Postgres caído) y se dispara el replay sin esperar a la recuperación, vuelven a fallar (`Nack`) y re-caen a la DLQ → mini-tormenta de reproceso (consume cómputo, no avanza).
+* **Análisis preliminar:** hoy el replay es **manual** (endpoint admin, RBAC admin), así que es teórico — un operador no lo dispara con la BD caída. **Mitigación si se automatiza:** gate del replay por readiness (no reproducir si las deps no están `ready`) y/o backoff. **Voto:** documentar; relevante solo si el replay se vuelve automático/programado.

@@ -34,7 +34,7 @@ export const prodApiConfig: ApiConfig = {
  * de `infra/terraform-demo/` antes del `nx build atalaya-web --configuration=demo` + `firebase deploy`.**
  * La selección la hace el build `demo` (fileReplacements de `deploy-target.ts`).
  */
-const DEMO_API_BASE_URL = 'https://REEMPLAZAR-con-demo_api_url-de-cloud-run.run.app';
+const DEMO_API_BASE_URL = 'https://atalaya-demo-api-aqeprs2exa-uc.a.run.app';
 export const demoApiConfig: ApiConfig = {
   baseUrl: DEMO_API_BASE_URL,
   hubUrl: `${DEMO_API_BASE_URL}/hubs/telemetry`,

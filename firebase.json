@@ -1,6 +1,6 @@
 {
   "hosting": {
-    "site": "atalaya-dashboard",
+    "site": "atalaya-demo",
     "public": "dist/apps/atalaya-web/browser",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "rewrites": [

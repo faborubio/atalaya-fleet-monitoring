@@ -3,6 +3,10 @@
 > Plan de implementación **concreto** para exponer Atalaya a reclutadores sin riesgo de costo.
 > Decisión registrada en [ADR-014](./SAD-Atalaya.md#adr-014--estrategia-de-demo-de-portafolio-dos-niveles). Estado del
 > despliegue real previo (G5b): [AUD-031](./AUDIT.md). Runbook de la infra completa: [infra/terraform/README.md](./infra/terraform/README.md).
+>
+> **✅ Nivel 1 DESPLEGADO Y EN VIVO (2026-06-25):** SPA **https://atalaya-demo.web.app** · API demo
+> **https://atalaya-demo-api-aqeprs2exa-uc.a.run.app** (Cloud Run scale-to-zero, ~$0). IaC en
+> `infra/terraform-demo/`. **Nivel 2:** pendiente (opcional). Operación del Nivel 1 en §1.7.
 
 ## 0. Resumen y por qué
 
@@ -148,7 +152,25 @@ El SPA de demo apunta al Cloud Run de demo y **muestra un login pulido** (decisi
 5. **Verificar:** abrir el sitio → el mapa se llena de vehículos en movimiento, las alertas aparecen, el histórico carga; cerrar la pestaña y confirmar (consola Cloud Run) que el instance escala a 0.
 
 ### 1.6. Esfuerzo Nivel 1
-**~½ día.** 1 archivo de código + 1 unit test, ~30 líneas de Terraform, una config de build y un deploy.
+**~½ día.** 1 archivo de código + 1 unit test, ~30 líneas de Terraform, una config de build y un deploy. (Real: hecho en una sesión.)
+
+### 1.7. Operación del Nivel 1 (lo que quedó desplegado, 2026-06-25)
+
+- **URLs:** SPA `https://atalaya-demo.web.app` · API `https://atalaya-demo-api-aqeprs2exa-uc.a.run.app`.
+  > El sitio se llama **`atalaya-demo`** (no `atalaya-dashboard`): tras el teardown de G5b, Firebase
+  > **reservó** ese ID por un tiempo, así que se creó uno nuevo (`firebase hosting:sites:create atalaya-demo`).
+- **Componentes:** Cloud Run `atalaya-demo-api` (estado en `infra/terraform-demo/`, backend GCS prefijo
+  `atalaya/demo/state`) · imagen `api:demo` en Artifact Registry · sitio Firebase `atalaya-demo`.
+- **Costo:** ~$0 sostenido (Cloud Run min-instances=0 + cpu_idle=true; Hosting gratis; AR ≈ centavos/mes).
+  **No requiere teardown** — es el nivel always-on.
+- **Re-desplegar tras un cambio de código del backend:**
+  ```
+  docker build -f apps/api/Dockerfile -t us-central1-docker.pkg.dev/fabian-portafolio/atalaya/api:demo . && docker push …/api:demo
+  D:\tools\terraform\terraform.exe -chdir=infra/terraform-demo apply -var="project_id=fabian-portafolio" -var="demo_image=…/api:demo"
+  # Cloud Run no redespliega si el tag no cambia; forzar nueva revisión: usar un tag nuevo (api:demo2) o `gcloud run services update atalaya-demo-api --region us-central1`.
+  ```
+- **Re-desplegar el frontend:** `nx build atalaya-web --configuration=demo && firebase deploy --only hosting --project fabian-portafolio`.
+- **Apagar/borrar la demo (si alguna vez):** `D:\tools\terraform\terraform.exe -chdir=infra/terraform-demo destroy -var="project_id=fabian-portafolio" -var="demo_image=…/api:demo"` (+ `firebase hosting:sites:delete atalaya-demo`).
 
 ---
 
@@ -229,7 +251,7 @@ Deja intacta la base persistente.
 **Orden:** Nivel 1 primero (mayor impacto: link 24/7 para el 95% de reclutadores), luego Nivel 2 Opción A.
 
 **Decisiones (resueltas 2026-06-25):**
-1. **Hosting: dos sitios** ✅ — `atalaya-dashboard.web.app` (demo always-on, link público estable) + `atalaya-live.web.app` (stack efímero, solo en entrevistas). Evita el "baile" de redespliegues y que el link público quede roto.
+1. **Hosting: dos sitios** ✅ — **`atalaya-demo.web.app`** (demo always-on, **YA EN VIVO**) + `atalaya-live.web.app` (stack efímero, pendiente). Evita el "baile" de redespliegues y que el link público quede roto. (Se usó `atalaya-demo` porque `atalaya-dashboard` quedó reservado tras el teardown de G5b.)
 2. **Nivel 2: Opción A** (rápida, `destroy -target`) como primer paso; migrar a B si se quiere pulir. (Nivel 2 es opcional; se puede vivir solo del Nivel 1 + docs + video.)
 3. **Generador: vistoso** ✅ — movimiento fluido + alertas disparadas a propósito cada N ticks.
 4. **Auth: login bonito** ✅ — `Auth:Mode=Dev` + pantalla de login pulida con botón "Entrar a la demo" de un clic (luce JWT+RBAC sin pedir credenciales). No abierto.
@@ -242,13 +264,13 @@ centavos. Base persistente: almacenamiento + AR ≈ centavos/mes. **Mantener Bud
 
 ## 4. Checklists
 
-**Nivel 1 (always-on $0):**
-- [ ] `DemoTelemetryGenerator` (vistoso: movimiento + alertas) + `DemoOptions` + registro en `Program.cs` + unit test.
-- [ ] Pantalla `Login` pulida + botón "Entrar a la demo" (auth modo `dev` visible, sin auto-login).
-- [ ] Artifact Registry recreado + imagen `api:demo` publicada.
-- [ ] `infra/terraform-demo/` (Cloud Run demo, scale-to-zero, público, `Auth:Mode=Dev`) aplicado.
-- [ ] SPA build `demo` (`demoApiConfig` + auth `dev`) + `firebase deploy` al sitio `atalaya-dashboard`.
-- [ ] Verificado en navegador: login → mapa vivo + alertas + histórico; instance escala a 0 al cerrar.
+**Nivel 1 (always-on $0) — ✅ COMPLETO (2026-06-25):**
+- [x] `DemoTelemetryGenerator` (vistoso: movimiento + alertas) + `DemoOptions` + registro en `Program.cs` + unit test.
+- [x] Pantalla `Login` pulida + botón "Entrar a la demo" (auth modo `dev` visible, sin auto-login).
+- [x] Artifact Registry recreado + imagen `api:demo` publicada.
+- [x] `infra/terraform-demo/` (Cloud Run demo, scale-to-zero, público, `Auth:Mode=Dev`) aplicado.
+- [x] SPA build `demo` (`demoApiConfig` + auth `dev`) + `firebase deploy` al sitio `atalaya-demo`.
+- [x] Verificado: SPA 200, CORS OK, API InMemory con 40 dispositivos, 401 sin token / 200 con token.
 
 **Nivel 2 (efímero):**
 - [ ] Clasificación persistente/efímero implementada (Opción A `-target` o B dos raíces).

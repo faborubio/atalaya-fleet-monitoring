@@ -29,12 +29,14 @@ cdk.out/
 
 # Terraform (G5) — estado, plan y vars con secretos NUNCA se suben; sí el lockfile de providers
 infra/terraform/.terraform/
+infra/terraform-demo/.terraform/
 *.tfstate
 *.tfstate.*
 *.tfplan
 crash.log
 infra/terraform/terraform.tfvars
 !infra/terraform/terraform.tfvars.example
+infra/terraform-demo/terraform.tfvars
 
 # Logs
 *.log

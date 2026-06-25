@@ -264,12 +264,12 @@ adquiere solo. Lecturas sin token → 401; con rol operador/admin → 200.
 
 ### Pendiente (próxima sesión)
 **No quedan ítems de features, backlog ni fases del pivote** — todo completo y verificado E2E, **G5b incluido**
-([AUD-031](./AUDIT.md), desplegado en `fabian-portafolio`). **Lo único pendiente es el teardown** (`terraform
-destroy`) para cerrar la ventana de costo (⚠️ ~US$70–120/mes encendido) — ejecutar cuando el usuario lo indique.
-⚠️ **Mientras no se haga el destroy, la infra está cobrando.** Para destruir: `D:\tools\terraform\terraform.exe
--chdir=infra/terraform destroy` (el bucket del lake y el dataset BQ tienen protección; bórralos aparte si quieres
-limpiar datos). Runbook/§Costo en `infra/terraform/README.md`. Pendiente menor del usuario: revisar el bloque de
-**casos borde** que añadió al final de `AUDIT.md` (secciones 1–6) + un plan de portafolio.
+([AUD-031](./AUDIT.md)) y ya **con teardown hecho** (el stack completo se destruyó; no cobra).
+**Demo de portafolio (ADR-014, [DEMO.md](./DEMO.md)):** **Nivel 1 DESPLEGADO Y EN VIVO** (~$0, scale-to-zero)
+— SPA `https://atalaya-demo.web.app`, API `https://atalaya-demo-api-aqeprs2exa-uc.a.run.app`, IaC en
+`infra/terraform-demo/` (estado propio). Operación en DEMO.md §1.7. **Pendiente (opcional):** Nivel 2
+(stack efímero con `demo-up`/`demo-down`). Pendiente menor del usuario: revisar el bloque de **casos borde**
+que añadió al final de `AUDIT.md` (secciones 1–6).
 
 Backlog AWS-era **todo cerrado** (referencia rápida):
 - ✅ Mapa deck.gl + virtual scroll ([AUD-026](./AUDIT.md)) · ✅ DLQ replay ([AUD-027](./AUDIT.md)) ·

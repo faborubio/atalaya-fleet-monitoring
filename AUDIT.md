@@ -1651,11 +1651,13 @@ espera de prerequisitos.
 * **Contexto:** Se implementó un replay de la DLQ para reenviar eventos fallidos (AUD-027).
 * **El Riesgo:** Si el worker hace un simple `UPDATE` en `device_state`, un evento viejo reprocesado horas después sobrescribirá la ubicación actual del vehículo.
 * **Mitigación propuesta:** Forzar un patrón estricto de **Last-Write-Wins** en la base de datos basado en el `timestamp` del evento, no en el tiempo de procesamiento (`UPDATE ... WHERE last_event_ts < @new_event_ts`).
+* **✅ Estado real (verificado 2026-06-25):** YA mitigado. El upsert usa `WHERE EXCLUDED.seq >= device_state.seq` ([`PostgresDeviceStateRepository.cs`](./libs/persistence/PostgresDeviceStateRepository.cs) L60): un evento reprocesado con `seq` menor **no** pisa el estado actual. Es LWW pero por **`seq`** (secuencia por dispositivo), que además evita el problema de reloj del §5.9. Residual: un **reinicio de dispositivo** que reinicie su `seq` quedaría bloqueado hasta recuperar el `seq` alto (mejora futura: epoch/boot-id por dispositivo).
 
 ### 1.2. El TTL de Redis vs. Desconexión Profunda
 * **Contexto:** La deduplicación se maneja con un set en Redis + TTL (ADR-006).
 * **El Riesgo:** Si un vehículo entra en zona sin cobertura durante horas y luego envía su caché de eventos retrasados por un *retry* de red, y el TTL de Redis ya expiró, el sistema podría procesar duplicados si el *broker* los reenvía.
 * **Mitigación propuesta:** Sincronizar el TTL de Redis con la ventana máxima realista de desconexión, o respaldar la deduplicación con un índice único compuesto (`device_id`, `event_ts`) en PostgreSQL.
+* **✅ Estado real (verificado 2026-06-25):** YA mitigado, y no depende del TTL de Redis. El archivo `telemetry` tiene `ON CONFLICT (device_id, ts, event_id) DO NOTHING` ([`PostgresTelemetryArchive.cs`](./libs/persistence/PostgresTelemetryArchive.cs) L63) — exactamente el índice único compuesto propuesto; el data lake usa **clave por hash de contenido** (`RawEventKey`, idempotente); y `device_state` se protege con el `seq guard` (§1.1). Aunque el TTL de Redis expire y reprocese un duplicado, ningún sink se duplica.
 
 ---
 
@@ -1665,11 +1667,13 @@ espera de prerequisitos.
 * **Contexto:** SignalR optimiza enviando solo los dispositivos del *viewport* activo.
 * **El Riesgo:** Durante un barrido rápido del mapa (*panning* o *zoom* continuo), el *bounding box* cambia decenas de veces por segundo. Notificar cada cambio al servidor saturaría el Hub de SignalR.
 * **Mitigación propuesta:** Implementar un *debounce* (ej. `debounceTime(300)`) en el stream de RxJS de Angular que vigila los límites del mapa antes de emitir la acción de "unirse/abandonar grupo".
+* **🟡 Estado real (verificado 2026-06-25):** No es un riesgo hoy. El viewport lo gobierna un **control discreto** (Todo/2×/4×), no la cámara del mapa, así que el conjunto solo cambia con un clic; además hay **dedup por igualdad de conjunto** antes de invocar `SyncViewport` ([`dashboard.ts`](./apps/atalaya-web/src/app/features/dashboard/dashboard.ts) L153). El `debounceTime` solo haría falta si se atara el viewport al pan/zoom continuo del mapa (mejora futura si se hace ese cambio).
 
 ### 2.4. El "Tab Zombie" del Operador (Fuga de Memoria)
 * **Contexto:** RxJS, Signals y coalescencia por frame evitan congelamientos (ADR-010).
 * **El Riesgo:** Un operador deja la pestaña del navegador abierta todo el fin de semana. Si el *Component Store* acumula un rastro histórico de coordenadas para dibujar la "cola" de la ruta, el arreglo crecerá hasta causar un *Out Of Memory* (OOM) en el navegador.
 * **Mitigación propuesta:** Implementar un mecanismo de recolección de basura (*garbage collection*) local, limitando el tamaño del arreglo de coordenadas en memoria (ej. máximo 100 puntos por vehículo).
+* **✅ Estado real (verificado 2026-06-25):** No hay fuga: el `FleetStore` guarda **un** `DeviceState` por dispositivo en un `Map` (se sobrescribe, no acumula trail) y el mapa deck.gl pinta puntos (`ScatterplotLayer`), no estelas. El único array de trabajo (`latencies`, métricas P50/P95) se **resetea cada segundo** ([`fleet-store.ts`](./apps/atalaya-web/src/app/core/telemetry/fleet-store.ts) L100). Memoria acotada por #dispositivos, no por tiempo. (Si algún día se dibuja la "cola" de ruta, ahí sí aplicaría el cap propuesto.)
 
 ---
 
@@ -1679,11 +1683,13 @@ espera de prerequisitos.
 * **Contexto:** Objetivo de ingesta de 5.000 ev/seg validando un token de dispositivo en `/ingest`.
 * **El Riesgo:** Si el endpoint hace una consulta a Cloud SQL para validar el token por cada evento, agotará el pool de conexiones de la base de datos casi inmediatamente.
 * **Mitigación propuesta:** Utilizar `IMemoryCache` (o Redis) en el backend con un TTL razonable (ej. 5 minutos) para validar los tokens sin tocar disco a altas frecuencias.
+* **✅ Estado real (verificado 2026-06-25):** No aplica. El token de ingesta se valida con una **comparación de string en memoria** (header `X-Ingest-Token` == valor de config, [`Program.cs`](./apps/api/Program.cs) `/ingest`) — nunca toca Cloud SQL. Cero presión sobre el pool por evento. (Si en el futuro fueran tokens por dispositivo en BD, ahí entraría el `IMemoryCache`.)
 
 ### 3.6. Drenaje de Conexiones WebSocket en Scale-Down
 * **Contexto:** Migración a Cloud Run para el backend y API (G5b).
 * **El Riesgo:** Cuando Cloud Run escala hacia abajo (*scale-down*), termina los contenedores. Si mata un contenedor abruptamente, los clientes conectados a ese nodo de SignalR experimentarán un corte feo.
 * **Mitigación propuesta:** Implementar *Graceful Shutdown* interceptando las señales de terminación (`SIGTERM`) para enviar un mensaje de cierre limpio a los clientes, forzándolos a reconectarse a un nodo sano de forma transparente antes de que el contenedor muera.
+* **🟡 Estado real (verificado 2026-06-25):** Parcial. El borde de ingesta **sí** drena al apagar (el `SnsBatchPublisher`/`GcpPubSubBatchPublisher` vacía su buffer con 5 s de gracia; el worker hace `subscriber.StopAsync(10s)`). Para los **WebSockets** no se emite un cierre explícito: los clientes dependen del **auto-reconnect**, ahora robustecido con **backoff + jitter** (§6.11, hecho) → al caer un nodo reconectan dispersos a uno sano. Un "goodbye" explícito del hub sería un plus, pero el reconnect con jitter cubre el caso práctico.
 
 ---
 
@@ -1693,10 +1699,12 @@ espera de prerequisitos.
 * **Contexto:** Volcado de eventos crudos NDJSON a GCS y consulta vía BigQuery (G4).
 * **El Riesgo:** Cambios de hardware/firmware pueden introducir campos nuevos en el JSON (ej. `bateria_backup`). Si los esquemas son rígidos, esta data se pierde o rompe el pipeline.
 * **Mitigación propuesta:** Utilizar tipos de datos nativos `JSON` tanto en BigQuery como en Postgres (`JSONB`) para garantizar flexibilidad estructural sin modificar el código.
+* **🟡 Estado real (verificado 2026-06-25):** Hoy el esquema es **fijo** (columnas explícitas en Postgres + esquema explícito en la external table de BigQuery). La tabla externa usa `ignore_unknown_values=true`, así que un campo nuevo en el JSON **no rompe** el pipeline, pero **se descarta** (no se consulta). La propuesta de `JSONB`/`JSON` los preservaría — mejora válida si se espera evolución frecuente de firmware. Aceptado como deuda consciente.
 
 ### 4.8. Downsampling: Desarrollo Propio vs. TimescaleDB
 * **Contexto:** Evaluación de TimescaleDB descartada a favor de lógica propia en .NET (ADR-007 y AUD-028).
 * **Observación:** ¿Fue por evitar *vendor lock-in* o costos de Cloud SQL? TimescaleDB maneja *continuous aggregates* de forma gratuita, mientras que la solución propia añade complejidad y consumo de CPU en el worker. Requiere vigilancia sobre el costo de cómputo en volumen.
+* **✅ Estado real (verificado 2026-06-25):** Decisión consciente, no defecto. El downsampling propio ([AUD-028](#aud-028), `QueryDownsampledAsync` + `/api/history/series`) **se calcula en la consulta de lectura** (no en el worker en cada escritura), así que no carga el camino caliente; y evita atar Cloud SQL a la extensión TimescaleDB. A escala alta, los *continuous aggregates* serían una optimización razonable — anotado como alternativa, no urgente.
 
 ---
 
@@ -1706,11 +1714,13 @@ espera de prerequisitos.
 * **Contexto:** Dependencia del `timestamp` generado por el dispositivo físico.
 * **El Riesgo:** Un GPS tiene el reloj defectuoso y envía un evento con fecha de "mañana". Si se usa lógica de *Last-Write-Wins* (Punto 1.1), este evento futuro bloqueará permanentemente las actualizaciones válidas de hoy, porque ninguna será "mayor" que la de mañana.
 * **Mitigación propuesta:** El worker debe rechazar o etiquetar como anómalos los eventos cuyo timestamp venga más de *N* segundos en el futuro respecto al servidor NTP local.
+* **✅ Estado real (verificado 2026-06-25):** El riesgo del "viajero del futuro" **no existe** aquí porque el orden NO se decide por `ts` sino por **`seq`** (§1.1): un `ts` corrupto no bloquea actualizaciones futuras. El `ts` solo se usa para particionar el archivo y para mostrar. (Mejora opcional: marcar como anómalo un `ts` muy fuera de rango para no ensuciar el histórico; baja prioridad.)
 
 ### 5.10. El Bloqueo Oculto por `DROP PARTITION`
 * **Contexto:** Retención de datos gestionada eliminando particiones viejas de PostgreSQL (`DROP PARTITION`) para no usar comandos `DELETE` pesados (ADR-007).
 * **El Riesgo:** Ejecutar un DDL como `DROP PARTITION` requiere momentáneamente un `ACCESS EXCLUSIVE LOCK` en la tabla principal. A 5.000 escrituras por segundo, ese bloqueo de microsegundos puede encolar suficientes transacciones en los workers como para generar *timeouts* en cascada.
 * **Mitigación propuesta:** Programar el proceso de limpieza (`CronJob` o `Worker`) para que se ejecute estrictamente en ventanas de bajo tráfico de la flota (ej. 3:00 AM) o usar estrategias de desanexado previo (`DETACH PARTITION CONCURRENTLY`).
+* **🟡 Estado real (verificado 2026-06-25):** La retención corre por intervalo (`PartitionRetentionService`, `Retention:IntervalHours`) con `DROP PARTITION`. El riesgo del `ACCESS EXCLUSIVE LOCK` es real a 5.000 ev/s, pero **bajo a escala de portafolio**. Mejoras válidas anotadas: ejecutar en ventana de bajo tráfico y/o `DETACH PARTITION CONCURRENTLY` antes del `DROP`. No urgente.
 
 ## 6. Caos de Red, Desorden y Costos Cloud
 
@@ -1718,16 +1728,19 @@ espera de prerequisitos.
 * **Contexto:** Tienes un hub de SignalR con cientos de usuarios (despachadores) conectados viendo el mapa en vivo.
 * **El Riesgo:** Si Cloud Run hace un despliegue de una nueva versión o hay un micro-corte de red en el balanceador de carga de GCP, los 500 clientes perderán la conexión WebSocket al mismo tiempo. Un milisegundo después, los 500 clientes intentarán reconectarse simultáneamente. Este pico repentino (la "estampida") puede tumbar la Minimal API por agotamiento de hilos (Thread Starvation) y saturar el Redis de *backplane*.
 * **Mitigación propuesta:** El cliente Angular de SignalR debe estar configurado con **Jitter + Exponential Backoff** en su política de reconexión. En lugar de que todos se reconecten en el segundo 0, se dispersan aleatoriamente (ej. unos a los 2s, otros a los 5s, otros a los 12s), suavizando la carga en el servidor.
+* **✅ Estado real (HECHO 2026-06-25):** Era el único gap real → **implementado**. Se reemplazó `withAutomaticReconnect()` (delays fijos `[0,2s,10s,30s]` sin jitter, abandona a los ~42 s) por una `IRetryPolicy` con **backoff exponencial (1s→cap 30s) + jitter (50–100%)** y **reintento indefinido** ([`telemetry-stream.service.ts`](./apps/atalaya-web/src/app/core/telemetry/telemetry-stream.service.ts), `reconnectPolicy`). N clientes que caen juntos ya no reconectan sincronizados.
 
 ### 6.12. Desorden de Eventos (Out-of-Order) en el Push al Frontend
 * **Contexto:** Pub/Sub (GCP) garantiza entrega *at-least-once*, pero **no garantiza orden estricto** (a menos que uses *ordering keys*, lo cual limita el throughput masivamente).
 * **El Riesgo:** El vehículo emite la ubicación A (10:00:00) y la B (10:00:01). Por latencia de red, Pub/Sub entrega la B al worker primero y luego la A. Tu lógica de base de datos ya está protegida con *Last-Write-Wins* (Punto 1.1), pero ¿qué pasa con el push en vivo? Si el worker procesa B y lo manda por SignalR, y milisegundos después procesa A y lo manda, el marcador del vehículo en el mapa de *deck.gl* saltará hacia atrás visualmente, causando un efecto fantasma (*rubber-banding*).
 * **Mitigación propuesta:** El *Component Store* en Angular no debe aceptar ciegamente todo lo que llega del WebSocket. Debe mantener un registro del último `timestamp` recibido por vehículo y **descartar silenciosamente** cualquier delta entrante que sea más antiguo que el estado actual en memoria.
+* **✅ Estado real (verificado 2026-06-25):** YA implementado, exactamente así pero por `seq`: `if (!current || d.seq >= current.seq)` antes de aplicar el delta ([`fleet-store.ts`](./apps/atalaya-web/src/app/core/telemetry/fleet-store.ts) L132). Un delta fuera de orden (seq menor) se descarta → el marcador no salta hacia atrás (sin *rubber-banding*).
 
 ### 6.13. La Píldora Envenenada (Poison Pill) y el Bucle de la Muerte
 * **Contexto:** Implementaste un replayer de la DLQ (AUD-027) para reenviar eventos fallidos.
 * **El Riesgo:** Un dispositivo sufre un fallo de firmware y envía un JSON corrupto (pero válido a nivel HTTP). Este *payload* llega al worker .NET y causa una excepción no controlada al intentar deserializar una coordenada (ej. manda un string "NULL" en lugar de un float). Falla, va a la DLQ. Tu administrador ejecuta el endpoint de replay de la DLQ. El mensaje vuelve a la cola principal, vuelve a crashear el worker, y vuelve a la DLQ. Has creado un bucle infinito que consume cómputo de Cloud Run ($$) sin resolver nada.
 * **Mitigación propuesta:** El proceso de *replay* no debe ser ciego. Los mensajes en la DLQ necesitan un atributo de `ReplayCount`. Si un mensaje se ha reintentado más de X veces, se clasifica permanentemente como "Poison Pill", se mueve a un *bucket* de cuarentena en Cloud Storage para análisis forense, y se elimina del flujo activo.
+* **✅ Estado real (verificado 2026-06-25):** El bucle infinito **ya está roto**: el consumer hace **`Ack`** (no `Nack`) cuando un mensaje no deserializa ([`GcpPubSubConsumer.cs`](./apps/worker/GcpPubSubConsumer.cs) L59) + log + métrica `atalaya.events.poison`. Un veneno re-encolado por el replay se reprocesa → falla deserialización → se **descarta** (Ack), no vuelve a la DLQ. La **cuarentena forense** (copiar el payload malo a GCS antes de descartarlo) sigue siendo una **mejora opcional** valiosa, pero no para evitar el bucle (que ya no ocurre). Caso residual: un payload válido que falle *siempre* en proceso haría `Nack` perpetuo → ahí sí ayudaría un `ReplayCount`; improbable con efectos idempotentes.
 
 ### 6.14. El Agujero Negro del Presupuesto en BigQuery (Full Table Scan)
 * **Contexto:** Fase G4. Usas BigQuery mediante tablas externas apuntando a tu Data Lake en Cloud Storage (NDJSON).
@@ -1735,3 +1748,4 @@ espera de prerequisitos.
 * **Mitigación propuesta:** 1. Configurar la tabla externa particionada usando *Hive Partitioning* (`/raw/year=yyyy/month=mm/day=dd/`).
   2. Forzar que BigQuery rechace cualquier consulta que no incluya un filtro `WHERE` sobre la columna de partición (fecha).
   3. (Ya tienes algo genial aquí: mencionas en AUD-024 un límite `MaximumBytesBilled`, ¡asegúrate de que esté configurado a un nivel estricto en la API!).
+* **🟡 Estado real (verificado 2026-06-25):** El punto 3 **ya está hecho**: `Gcp:AnalyticsMaxBytesBilled` (default 1 GB) se pasa como `MaximumBytesBilled` y BigQuery **rechaza** (no factura) cualquier query que lo exceda ([`GcpOptions.cs`](./apps/api/Services/GcpOptions.cs) L34, [AUD-024](#aud-024)). Faltan los puntos 1 y 2: **hive partitioning** (layout `year=/month=/day=`) y **exigir filtro de partición**. Hoy una query mala se **corta en el tope** pero igual escanea hasta ahí. Mejora real anotada (requiere cambiar el layout del lake + el setup de la tabla externa).

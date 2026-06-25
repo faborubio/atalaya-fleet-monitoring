@@ -3,13 +3,29 @@ import {
   HubConnection,
   HubConnectionBuilder,
   HubConnectionState,
+  type IRetryPolicy,
   LogLevel,
+  type RetryContext,
 } from '@microsoft/signalr';
 import { Observable, Subject } from 'rxjs';
 import { API_CONFIG } from '../api.config';
 import { AuthService } from '../auth/auth.service';
 import { DeviceState } from '../models/device-state';
 import { AlertIncident } from '../models/alert';
+
+/**
+ * Política de reconexión con **backoff exponencial + jitter** (AUDIT §6.11, "thundering herd"):
+ * si N clientes pierden la conexión a la vez (deploy de Cloud Run, micro-corte del balanceador), el
+ * jitter los dispersa para que no reconecten sincronizados y saturen la API/Redis. El default de
+ * SignalR (`[0, 2s, 10s, 30s]` y se rinde) no tiene jitter y abandona pronto; aquí reintentamos
+ * indefinidamente (la pestaña sigue viva) con un cap por intento.
+ */
+const reconnectPolicy: IRetryPolicy = {
+  nextRetryDelayInMilliseconds(ctx: RetryContext): number {
+    const backoff = Math.min(30_000, 1_000 * 2 ** ctx.previousRetryCount); // 1s,2s,4s… cap 30s
+    return backoff / 2 + Math.random() * (backoff / 2); // jitter: 50–100% del backoff
+  },
+};
 
 /**
  * Capa de transporte del camino caliente (ADR-002): mantiene la conexión SignalR con
@@ -53,7 +69,7 @@ export class TelemetryStreamService {
       // accessTokenFactory: SignalR lo manda como ?access_token= (el WebSocket no lleva cabecera).
       // En Auth:Disabled devuelve cadena vacía y el hub no exige token.
       .withUrl(this.config.hubUrl, { accessTokenFactory: () => this.auth.ensureToken() })
-      .withAutomaticReconnect()
+      .withAutomaticReconnect(reconnectPolicy)
       .configureLogging(LogLevel.Warning)
       .build();
 

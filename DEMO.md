@@ -169,12 +169,17 @@ El SPA de demo apunta al Cloud Run de demo y **muestra un login pulido** (decisi
   D:\tools\terraform\terraform.exe -chdir=infra/terraform-demo apply -var="project_id=fabian-portafolio" -var="demo_image=…/api:demo"
   # Cloud Run no redespliega si el tag no cambia; forzar nueva revisión: usar un tag nuevo (api:demo2) o `gcloud run services update atalaya-demo-api --region us-central1`.
   ```
-- **Re-desplegar el frontend:** `nx build atalaya-web --configuration=demo && firebase deploy --only hosting --project fabian-portafolio`.
+- **Re-desplegar el frontend:** `nx build atalaya-web --configuration=demo && firebase deploy --only hosting:atalaya-demo --project fabian-portafolio` (firebase.json es multi-sitio: `atalaya-demo` + `atalaya-live`; targetea siempre el sitio).
 - **Apagar/borrar la demo (si alguna vez):** `D:\tools\terraform\terraform.exe -chdir=infra/terraform-demo destroy -var="project_id=fabian-portafolio" -var="demo_image=…/api:demo"` (+ `firebase hosting:sites:delete atalaya-demo`).
 
 ---
 
 ## 2. Nivel 2 — Stack efímero completo (solo lo que uses)
+
+> **✅ IMPLEMENTADO (scripts + IaC, 2026-06-25), validado con `terraform plan` (40 to add, 0 destroy,
+> sin errores).** Falta solo el **ensayo pagado** (un `up` real → smoke → `down`, ~US$1–2, ~25 min) — la
+> ventana de costo la abre el usuario cuando quiera. Scripts: `infra/demo-up.ps1` / `infra/demo-down.ps1`.
+> SPA "live": sitio `atalaya-live` (creado). CORS del stack → `atalaya-live` (en `terraform.tfvars`).
 
 ### 2.1. Idea
 
@@ -209,40 +214,41 @@ base persistente ni reconstruir imágenes.
   sobre `terraform-live/`. Pro: separación real, `destroy` total de `live` sin riesgo. Contra: refactor de
   un día (mover recursos entre estados con `terraform state mv` o re-import).
 
-**Recomendado:** empezar con **A** (funciona ya), migrar a **B** cuando haya tiempo.
+**Elegido: Opción A** (implementada). El `down` es el `terraform destroy -target` de los billables; el
+`up` es un `terraform apply` normal. La base persistente queda intacta entre ciclos (verificado: el bucket
+`atalaya-datalake` está en el estado y **no** se recrea; el dataset/tabla BigQuery sí, pero son gratis/rápidos).
 
-### 2.3. URL estable para el SPA "live" (evitar rebuild por cada apply)
+### 2.3. URL estable para el SPA "live" — NO hace falta runtime config
 
-La URL de Cloud Run puede cambiar si el servicio se recrea. Para no reconstruir el SPA cada vez:
+Resultó innecesario: la **URL de Cloud Run es determinista y estable** por `proyecto+región+nombre de
+servicio` (el hash `aqeprs2exa` es del proyecto). Recrear `atalaya-api` da **siempre**
+`https://atalaya-api-aqeprs2exa-uc.a.run.app`. Por eso el SPA "live" se compila normal (build
+`production` → `prodApiConfig`, que ya apunta a esa URL) y **no cambia entre `up`s**. Sin `config.json`,
+sin dominio personalizado.
 
-- **Config en runtime:** el SPA "live" lee `/assets/config.json` al arrancar (en vez de compilar la URL).
-  El script `demo-up` escribe el `api_url` actual en ese JSON **antes** del `firebase deploy`. Así el build
-  del SPA es fijo y solo cambia un JSON.
-- Alternativa: **dominio personalizado** mapeado al Cloud Run (URL estable), más setup inicial.
+### 2.4. Scripts up/down (implementados)
 
-### 2.4. Scripts up/down
+**`infra/demo-up.ps1`** — enciende todo:
+1. Build + push de `api:live`/`worker:live` (omitible con `-SkipBuild` si ya existen).
+2. `terraform apply -var api_image=… -var worker_image=…` (~15–20 min: Cloud SQL es el cuello).
+3. `terraform output -raw api_url`; `nx build atalaya-web --configuration=production`; `firebase deploy --only hosting:atalaya-live`.
+4. Smoke: espera `GET $api_url/health/ready` = 200.
+5. Imprime las URLs y el recordatorio de apagar.
 
-**`infra/demo-up.ps1`** (orquesta el encendido):
-1. Verifica que existan las imágenes en Artifact Registry (si no, build+push).
-2. `terraform apply` (Opción A) o en `terraform-live/` (Opción B). (~15–20 min: Cloud SQL es el cuello.)
-3. Lee outputs (`api_url`); escribe `assets/config.json`; `firebase deploy --only hosting:live`.
-4. Smoke rápido: `curl $api_url/health/ready` (espera 200) + ingest de prueba.
-5. Imprime la URL del SPA live para compartir.
+**`infra/demo-down.ps1`** — apaga lo que cobra: `terraform destroy -target` de Cloud Run (api/worker + IAM
+público), Cloud SQL (instancia+db+user), Memorystore y el VPC connector. Deja la base persistente.
 
-**`infra/demo-down.ps1`:** `terraform destroy` de los billables (Opción A `-target`, u Opción B raíz `live`).
-Deja intacta la base persistente.
+> Agendar el `up` **~25–30 min antes** de la entrevista (margen por Cloud SQL). Login en el SPA "live":
+> usuario de prueba de Identity Platform (`atalaya-test@atalaya.dev`) — es auth OIDC real (modo Oidc del stack).
 
-> Agendar el `up` **~25–30 min antes** de la entrevista (margen por Cloud SQL).
-
-### 2.5. Pasos de ejecución (Nivel 2)
-1. Decidir Opción A o B (recomendado A primero).
-2. (A) escribir `demo-up.ps1`/`demo-down.ps1` con los `-target`. (B) partir el Terraform en base/live.
-3. SPA live → config en runtime (`assets/config.json`) + sitio de hosting `live`.
-4. Ensayo completo: `up` → demo en vivo + consola GCP (Pub/Sub, autoescalado) → `down` → verificar que solo queda la base.
+### 2.5. Pasos de ejecución (Nivel 2) — estado
+1. ✅ Opción A elegida e implementada (scripts + `-target`).
+2. ✅ SPA "live": sitio `atalaya-live` creado; `firebase.json` multi-sitio (`atalaya-demo` + `atalaya-live`); CORS del stack → `atalaya-live`.
+3. ✅ Validado con `terraform plan` (40 to add, 0 destroy, sin errores; el bucket persiste).
+4. ⏳ **Ensayo pagado pendiente:** `pwsh infra/demo-up.ps1` → demo en vivo + consola GCP (Pub/Sub, autoescalado) → `pwsh infra/demo-down.ps1` → verificar que solo queda la base.
 
 ### 2.6. Esfuerzo Nivel 2
-- Opción A: **~2–3 h** (scripts + runtime config + ensayo).
-- Opción B: **+1 día** (refactor de estados).
+Implementación: hecha. Falta el ensayo pagado (~US$1–2, ~25 min) cuando el usuario abra la ventana de costo.
 
 ---
 
@@ -252,7 +258,7 @@ Deja intacta la base persistente.
 
 **Decisiones (resueltas 2026-06-25):**
 1. **Hosting: dos sitios** ✅ — **`atalaya-demo.web.app`** (demo always-on, **YA EN VIVO**) + `atalaya-live.web.app` (stack efímero, pendiente). Evita el "baile" de redespliegues y que el link público quede roto. (Se usó `atalaya-demo` porque `atalaya-dashboard` quedó reservado tras el teardown de G5b.)
-2. **Nivel 2: Opción A** (rápida, `destroy -target`) como primer paso; migrar a B si se quiere pulir. (Nivel 2 es opcional; se puede vivir solo del Nivel 1 + docs + video.)
+2. **Nivel 2: Opción A** ✅ implementada (scripts `demo-up`/`demo-down` con `destroy -target`); falta el ensayo pagado. Migrar a B (dos raíces) si algún día se quiere pulir.
 3. **Generador: vistoso** ✅ — movimiento fluido + alertas disparadas a propósito cada N ticks.
 4. **Auth: login bonito** ✅ — `Auth:Mode=Dev` + pantalla de login pulida con botón "Entrar a la demo" de un clic (luce JWT+RBAC sin pedir credenciales). No abierto.
 
@@ -272,8 +278,9 @@ centavos. Base persistente: almacenamiento + AR ≈ centavos/mes. **Mantener Bud
 - [x] SPA build `demo` (`demoApiConfig` + auth `dev`) + `firebase deploy` al sitio `atalaya-demo`.
 - [x] Verificado: SPA 200, CORS OK, API InMemory con 40 dispositivos, 401 sin token / 200 con token.
 
-**Nivel 2 (efímero):**
-- [ ] Clasificación persistente/efímero implementada (Opción A `-target` o B dos raíces).
-- [ ] `demo-up.ps1` / `demo-down.ps1`.
-- [ ] SPA live con config en runtime (`assets/config.json`) + sitio `live`.
-- [ ] Ensayo `up` → demo + consola GCP → `down` → solo queda la base.
+**Nivel 2 (efímero) — implementado, falta ensayo pagado:**
+- [x] Clasificación persistente/efímero (Opción A `-target` en `demo-down.ps1`).
+- [x] `demo-up.ps1` / `demo-down.ps1`.
+- [x] SPA live: sitio `atalaya-live` + `firebase.json` multi-sitio + CORS del stack → `atalaya-live` (URL de Cloud Run estable → sin runtime config).
+- [x] Validado con `terraform plan` (40 to add, 0 destroy, sin errores).
+- [ ] **Ensayo pagado:** `up` → demo + consola GCP → `down` → solo queda la base (~US$1–2, ~25 min).

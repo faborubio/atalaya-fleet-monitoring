@@ -2,15 +2,13 @@
 project_id = "fabian-portafolio"
 region     = "us-central1"
 
-# Imágenes (se publican en Artifact Registry en G5b antes del apply):
-#   us-central1-docker.pkg.dev/fabian-portafolio/atalaya/api:v1
-#   us-central1-docker.pkg.dev/fabian-portafolio/atalaya/worker:v1
-api_image    = ""
-worker_image = ""
+# Imágenes en Artifact Registry. El Nivel 2 (demo-up.ps1) publica api:live/worker:live y las pasa
+# por -var; estos valores son el fallback para aplicar a mano:
+api_image    = "us-central1-docker.pkg.dev/fabian-portafolio/atalaya/api:live"
+worker_image = "us-central1-docker.pkg.dev/fabian-portafolio/atalaya/worker:live"
 
 # Token de ingesta (cámbialo). Va a Secret Manager.
 ingest_token = "change-me-ingest-token"
 
-# Dominio de la SPA (se conoce tras crear el sitio de Hosting; se rellena en G5b):
-#   cors_origins = ["https://atalaya-dashboard.web.app"]
-cors_origins = []
+# Orígenes del SPA "live" (Nivel 2, ADR-014 / DEMO.md): sitio Firebase atalaya-live.
+cors_origins = ["https://atalaya-live.web.app", "https://atalaya-live.firebaseapp.com"]

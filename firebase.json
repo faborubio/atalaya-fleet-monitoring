@@ -1,13 +1,16 @@
 {
-  "hosting": {
-    "site": "atalaya-demo",
-    "public": "dist/apps/atalaya-web/browser",
-    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
-    "rewrites": [
-      {
-        "source": "**",
-        "destination": "/index.html"
-      }
-    ]
-  }
+  "hosting": [
+    {
+      "site": "atalaya-demo",
+      "public": "dist/apps/atalaya-web/browser",
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+      "rewrites": [{ "source": "**", "destination": "/index.html" }]
+    },
+    {
+      "site": "atalaya-live",
+      "public": "dist/apps/atalaya-web/browser",
+      "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+      "rewrites": [{ "source": "**", "destination": "/index.html" }]
+    }
+  ]
 }

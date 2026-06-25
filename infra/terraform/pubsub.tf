@@ -66,3 +66,11 @@ resource "google_pubsub_subscription_iam_member" "api_dlq_reader" {
   role         = "roles/pubsub.subscriber"
   member       = "serviceAccount:${google_service_account.api.email}"
 }
+
+# La readiness del API (PubSubHealthCheck) hace GetTopic, que pubsub.publisher NO cubre (solo publish).
+# Damos viewer scoped al topic (no project-wide) para que /health/ready valide el broker sin sobre-permisos.
+resource "google_pubsub_topic_iam_member" "api_topic_viewer" {
+  topic  = google_pubsub_topic.telemetry.id
+  role   = "roles/pubsub.viewer"
+  member = "serviceAccount:${google_service_account.api.email}"
+}

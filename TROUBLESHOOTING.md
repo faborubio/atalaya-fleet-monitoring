@@ -307,5 +307,54 @@ cambiar de versión para obtener otro digest.
 
 ---
 
+## TS-008 — Worker en Cloud Run no pasa el startup probe (config de emulador en prod)
+
+**Fecha:** 2026-06-25 · **Área:** infra/GCP (G5b) · **Estado:** ✅ Resuelto
+
+**Síntoma**
+- `terraform apply` del worker falla: *"Container failed to become healthy. Startup probes timed out after 4m"*.
+- Logs del worker: `TaskCanceledException` (HttpClient timeout 100 s) en `GcsRawEventArchive.EnsureBucketAsync`, luego `Uncaught signal: 6` y `STARTUP TCP probe failed on port 8080`.
+
+**Causa raíz**
+Dos causas que se acumulan, ambas por **config de emulador filtrada a Production**:
+1. `appsettings.json` **base** del worker traía `Gcp:EmulatorHost` y `Gcp:StorageEmulatorHost` (valores `localhost`). En Cloud Run (`Production`) no se limpian → `UsesEmulator`/`UsesStorageEmulator` quedan `true` y los clientes apuntan a `localhost` inexistente. (La API no sufría esto: su base ya era prod-safe, con esa config solo en `appsettings.Development.json`.)
+2. `EnsureBucketAsync` llamaba a `CreateBucketAsync` (operación a **nivel de bucket**) en el arranque, **antes** de abrir el puerto de health. La SA del worker solo tiene permisos a nivel de objeto (`storage.objectAdmin`, sin `buckets.create`), así que la llamada cuelga 100 s y mata el proceso → el TCP probe nunca encuentra el puerto abierto.
+
+**Solución**
+- Mover `EmulatorHost`/`StorageEmulatorHost` del `appsettings.json` base a `appsettings.Development.json` (dejar el base prod-safe, espejo de la API).
+- `EnsureBucketAsync`: no-op en nube real (`if (!options.UsesStorageEmulator) return;`); el bucket lo crea Terraform. Mismo patrón que `GcpPubSubConsumer.EnsureTopologyAsync` / `GcpPubSubBatchPublisher` (`if (!options.UsesEmulator) return;`).
+
+**Prevención**
+La config de emuladores vive **solo** en `appsettings.Development.json`. Cualquier "ensure/create" de topología (bucket, topic, sub) debe ser no-op en prod (lo hace el IaC) y **nunca** bloquear el arranque del host antes de abrir el health port.
+
+---
+
+## TS-009 — Errores de `terraform apply` que `terraform validate` no detecta (G5b)
+
+**Fecha:** 2026-06-25 · **Área:** infra/GCP (G5b) · **Estado:** ✅ Resuelto
+
+**Síntoma**
+`terraform validate` pasa en G5a, pero el `apply` real falla en varios recursos:
+- Cloud SQL: *"Invalid Tier (db-f1-micro) for (ENTERPRISE_PLUS) Edition"*.
+- VPC connector: *"A Connector must specify either max_throughput or max_instances"*; un update posterior lo deja en estado `ERROR`.
+- API `/health/ready` → 503 con `PermissionDenied` en Pub/Sub.
+- Tabla externa BQ: *"cannot destroy table ... without setting deletion_protection=false"*.
+- Cloud Run: `plan` con diff perpetuo del bloque `scaling`.
+
+**Causa raíz**
+`validate` solo chequea HCL + esquema del provider; no contacta la API de GCP. Los defaults del proveedor cambian (Cloud SQL → `ENTERPRISE_PLUS`; connector v6 exige rango de instancias), el IAM real importa (`pubsub.publisher` no cubre `GetTopic` → falta `pubsub.viewer`), y hay recursos importados con protecciones/campos materializados por el servidor.
+
+**Solución**
+- Cloud SQL: `edition = "ENTERPRISE"` (permite tiers shared-core como `db-f1-micro`).
+- Connector: `min_instances=2`/`max_instances=3`; si quedó en `ERROR`, **borrar y recrear** (un update in-place de instancias puede fallar internamente).
+- Pub/Sub: conceder `roles/pubsub.viewer` **scoped al topic** a la SA del API (para el `GetTopic` de la readiness).
+- Tabla externa BQ: si bloquea el replace, `terraform state rm` + borrar la tabla real (no guarda datos) → recrear.
+- Cloud Run: `lifecycle { ignore_changes = [scaling] }` (el provider materializa el `scaling` de servicio; el escalado real va por `template.scaling`).
+
+**Prevención**
+G5a (`validate` + build de imágenes, $0) **no sustituye** un `apply` real: planificar G5b como un ciclo de *apply → leer error → fix → re-apply*. Para recursos preexistentes (creados a mano en fases previas), **importarlos** al estado antes del primer `apply`.
+
+---
+
 > Mantén este archivo cerca: cada error resuelto que registres aquí es tiempo que no
 > vuelves a perder.

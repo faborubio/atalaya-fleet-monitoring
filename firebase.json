@@ -1,0 +1,13 @@
+{
+  "hosting": {
+    "site": "atalaya-dashboard",
+    "public": "dist/apps/atalaya-web/browser",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}

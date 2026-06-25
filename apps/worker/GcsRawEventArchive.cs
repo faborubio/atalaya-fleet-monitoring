@@ -18,6 +18,11 @@ public sealed class GcsRawEventArchive(StorageClient storage, GcpOptions options
 {
     public async Task EnsureBucketAsync(CancellationToken ct = default)
     {
+        // En GCP real el bucket lo crea Terraform (G5) y la SA del worker solo tiene permisos a nivel
+        // de objeto (storage.objectAdmin, sin buckets.create); intentar crearlo aquí colgaría/fallaría
+        // el arranque. Solo lo auto-creamos contra el emulador (fake-gcs), igual que la topología de
+        // Pub/Sub (ver GcpPubSubConsumer.EnsureTopologyAsync).
+        if (!options.UsesStorageEmulator) return;
         try
         {
             await storage.CreateBucketAsync(options.ProjectId, options.Bucket, cancellationToken: ct);

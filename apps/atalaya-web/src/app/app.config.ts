@@ -27,7 +27,7 @@ const firebaseAuthConfig: AuthConfig = {
 
 // Modo activo del dashboard: `false` = token dev silencioso (offline, desarrollo local);
 // `true` = login real contra Identity Platform (demo end-to-end). Un solo flip.
-const useFirebaseAuth = false;
+const useFirebaseAuth = true;
 const authConfig: AuthConfig = useFirebaseAuth ? firebaseAuthConfig : devAuthConfig;
 
 export const appConfig: ApplicationConfig = {

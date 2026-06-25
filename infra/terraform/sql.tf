@@ -14,7 +14,10 @@ resource "google_sql_database_instance" "main" {
   deletion_protection = false # dev; en prod = true
 
   settings {
-    tier              = var.cloudsql_tier
+    tier = var.cloudsql_tier
+    # db-f1-micro (shared-core) solo es válido en edición ENTERPRISE; el default del provider
+    # pasó a ENTERPRISE_PLUS (que exige tiers dedicados). Fijamos ENTERPRISE para el tier mínimo.
+    edition           = "ENTERPRISE"
     availability_type = "ZONAL"
     disk_size         = 10
     disk_autoresize   = true

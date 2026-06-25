@@ -36,6 +36,51 @@ proyecto.
 
 ---
 
+## AUD-031 — Pivote a GCP · G5b: despliegue real en la nube + smoke E2E (2026-06-25)
+
+**Fase:** Pivote a GCP (ADR-013), cierre del roadmap. G5a ([AUD-025](#aud-025)) escribió el IaC; G5b lo **aplica de verdad**.
+**Alcance:** `terraform apply` completo contra el proyecto real **fabian-portafolio** (Cloud SQL, Memorystore, Pub/Sub+DLQ, VPC connector, secrets, IAM, 2× Cloud Run, Firebase Hosting, BigQuery), despliegue del SPA a Firebase Hosting, y **smoke E2E en vivo** de la cadena completa. La ventana de costo se abrió por decisión del usuario.
+**Auditor:** Fabián Rubio + Claude
+
+### Qué se hizo
+
+- **Estado remoto y preexistentes:** `init` con backend GCS (`gs://atalaya-tfstate`). El bucket del lake (`atalaya-datalake`), el dataset (`atalaya_analytics`) y la tabla externa, creados a mano en G2/G4, se **importaron** al estado para evitar 409 en el `apply`.
+- **`terraform apply`** del plano completo. El `apply` real destapó **bugs de config que `terraform validate` (G5a) no detecta** (justo el valor de hacer G5b): ver Hallazgos.
+- **Frontend:** `PROD_API_BASE_URL` ← `api_url` de Cloud Run; `useFirebaseAuth=true`; `cors_origins` ← dominios de Hosting (re-apply). `nx build atalaya-web` + `firebase deploy --only hosting` (creados `firebase.json`/`.firebaserc`, sitio `atalaya-dashboard`).
+- **Imágenes:** `worker:v2`→`v3` reconstruidas y publicadas en Artifact Registry tras cada fix del worker (login a AR con el token ADC: `oauth2accesstoken`).
+
+### Hallazgos
+
+| Sev | Hallazgo | Acción | Estado |
+|-----|----------|--------|--------|
+| 🔴 | **Worker crashea al arrancar** en `GcsRawEventArchive.EnsureBucketAsync`: en prod la SA solo tiene permisos a nivel de objeto (sin `buckets.create`) → la llamada cuelga 100 s y mata el proceso antes de abrir el puerto de health (startup probe falla a los 4 min) | No-op de creación en prod (solo crea contra el emulador, como la topología de Pub/Sub) | Resuelto |
+| 🔴 | **Emulator hosts horneados en `appsettings.json` base del worker** (`EmulatorHost`/`StorageEmulatorHost`) → en Production `UsesEmulator`/`UsesStorageEmulator` quedaban `true` y los clientes apuntaban a `localhost` inexistente | Mover esa config a `appsettings.Development.json` (espejo del patrón de la API, cuyo base ya era prod-safe) | Resuelto |
+| 🟠 | **API `/health/ready` 503**: `PubSubHealthCheck` hace `GetTopic`, que `roles/pubsub.publisher` no cubre (solo `publish`) | `roles/pubsub.viewer` **scoped al topic** (mínimo privilegio) para la SA del API | Resuelto |
+| 🟠 | **Cloud SQL falla**: `db-f1-micro` inválido para la edición `ENTERPRISE_PLUS` (nuevo default del provider) | `edition = "ENTERPRISE"` en `sql.tf` | Resuelto |
+| 🟠 | **VPC connector falla**: el provider 6.x exige `min/max_instances`; un update posterior lo dejó en estado `ERROR` | Fijar `min_instances=2`/`max_instances=3`; borrar+recrear el connector roto | Resuelto |
+| 🟡 | **Tabla externa BQ**: replace bloqueado por `deletion_protection` del recurso importado | Quitar de estado + borrar la tabla real (no guarda datos) → Terraform la recrea | Resuelto |
+| 🟡 | **Diff perpetuo** en Cloud Run: el provider materializa el bloque `scaling` a nivel de servicio que no declaramos (escalamos por `template.scaling`) | `lifecycle { ignore_changes = [scaling] }` en ambos servicios → `plan` limpio | Resuelto |
+
+### Verificaciones (smoke E2E en vivo)
+
+- [x] SPA servida (200) en `https://atalaya-dashboard.web.app`.
+- [x] API `/health/live` y `/health/ready` → **200**.
+- [x] Auth aplicada: `GET /api/devices` sin token → **401**.
+- [x] **CORS**: preflight desde el dominio del SPA devuelve `access-control-allow-origin` correcto.
+- [x] **Ingesta**: `POST /ingest` con `X-Ingest-Token` → **202**.
+- [x] **Cadena fría**: el evento aparece como objeto NDJSON nuevo en `gs://atalaya-datalake/raw/...` (worker consumió de Pub/Sub y archivó en GCS).
+- [x] **Read autenticado**: `GET /api/devices` con ID token de Identity Platform (rol `operador`) → **200** y devuelve el `smoke-device` ingerido (read model en Cloud SQL).
+- [x] Worker (revisión v3) **healthy**, sin errores en curso (los `signal 6` en logs son de las revisiones v1/v2 previas al fix).
+- [x] **Idempotencia**: `terraform plan` final → **No changes**.
+
+### Conclusión
+
+**G5b cerrado: la plataforma corre de verdad en GCP** (`fabian-portafolio`), con la cadena completa verificada en vivo: `/ingest` → Pub/Sub → worker → **Cloud SQL (read model) + GCS (data lake)** → `/api/devices` (OIDC + RBAC) → SPA en Firebase Hosting. El `apply` real validó lo que el `validate` de G5a no podía: 7 hallazgos de config corregidos (2 críticos del worker, IAM, edición SQL, connector, BQ, drift). Con esto **el roadmap del pivote a GCP (G0…G5) queda completo**. Pendiente operativo: **`terraform destroy`** para cerrar la ventana de costo (⚠️ ~US$70–120/mes encendido) — ver §Costo en `infra/terraform/README.md`.
+
+**Veredicto:** ✅ Despliegue real en la nube logrado y verificado E2E. Teardown a ejecutar cuando el usuario lo indique.
+
+---
+
 ## AUD-030 — Auth: refresh-token (REST + hub en sesiones largas) (2026-06-24)
 
 **Fase:** Endurecimiento de auth (ADR-012, sobre G3/[AUD-023](#aud-023)). Último ítem de features de Fase 3.
@@ -1592,3 +1637,101 @@ inventados: lo que quede bloqueado se marca como bloqueado.
 
 **Veredicto:** ✅ Apto para arrancar Fase 0 (subconjunto frontend). Backend/infra en
 espera de prerequisitos.
+
+
+# Revisión Arquitectónica y Casos Borde (Senior Audit)
+**Proyecto:** Atalaya — Monorepo (Angular, .NET, GCP)
+**Objetivo:** Estresar el diseño documentado en `SAD-Atalaya.md` frente a escenarios reales de producción.
+
+---
+
+## 1. Integridad de Datos y Consistencia (Camino Caliente)
+
+### 1.1. El Riesgo del Replay en la DLQ (El "Viaje en el Tiempo")
+* **Contexto:** Se implementó un replay de la DLQ para reenviar eventos fallidos (AUD-027).
+* **El Riesgo:** Si el worker hace un simple `UPDATE` en `device_state`, un evento viejo reprocesado horas después sobrescribirá la ubicación actual del vehículo.
+* **Mitigación propuesta:** Forzar un patrón estricto de **Last-Write-Wins** en la base de datos basado en el `timestamp` del evento, no en el tiempo de procesamiento (`UPDATE ... WHERE last_event_ts < @new_event_ts`).
+
+### 1.2. El TTL de Redis vs. Desconexión Profunda
+* **Contexto:** La deduplicación se maneja con un set en Redis + TTL (ADR-006).
+* **El Riesgo:** Si un vehículo entra en zona sin cobertura durante horas y luego envía su caché de eventos retrasados por un *retry* de red, y el TTL de Redis ya expiró, el sistema podría procesar duplicados si el *broker* los reenvía.
+* **Mitigación propuesta:** Sincronizar el TTL de Redis con la ventana máxima realista de desconexión, o respaldar la deduplicación con un índice único compuesto (`device_id`, `event_ts`) en PostgreSQL.
+
+---
+
+## 2. Rendimiento del Frontend y Tiempo Real
+
+### 2.3. Rebote en las Suscripciones por Viewport (Thrashing)
+* **Contexto:** SignalR optimiza enviando solo los dispositivos del *viewport* activo.
+* **El Riesgo:** Durante un barrido rápido del mapa (*panning* o *zoom* continuo), el *bounding box* cambia decenas de veces por segundo. Notificar cada cambio al servidor saturaría el Hub de SignalR.
+* **Mitigación propuesta:** Implementar un *debounce* (ej. `debounceTime(300)`) en el stream de RxJS de Angular que vigila los límites del mapa antes de emitir la acción de "unirse/abandonar grupo".
+
+### 2.4. El "Tab Zombie" del Operador (Fuga de Memoria)
+* **Contexto:** RxJS, Signals y coalescencia por frame evitan congelamientos (ADR-010).
+* **El Riesgo:** Un operador deja la pestaña del navegador abierta todo el fin de semana. Si el *Component Store* acumula un rastro histórico de coordenadas para dibujar la "cola" de la ruta, el arreglo crecerá hasta causar un *Out Of Memory* (OOM) en el navegador.
+* **Mitigación propuesta:** Implementar un mecanismo de recolección de basura (*garbage collection*) local, limitando el tamaño del arreglo de coordenadas en memoria (ej. máximo 100 puntos por vehículo).
+
+---
+
+## 3. Cuellos de Botella y Escalabilidad Backend
+
+### 3.5. El Cuello de Botella Silencioso en la Ingesta
+* **Contexto:** Objetivo de ingesta de 5.000 ev/seg validando un token de dispositivo en `/ingest`.
+* **El Riesgo:** Si el endpoint hace una consulta a Cloud SQL para validar el token por cada evento, agotará el pool de conexiones de la base de datos casi inmediatamente.
+* **Mitigación propuesta:** Utilizar `IMemoryCache` (o Redis) en el backend con un TTL razonable (ej. 5 minutos) para validar los tokens sin tocar disco a altas frecuencias.
+
+### 3.6. Drenaje de Conexiones WebSocket en Scale-Down
+* **Contexto:** Migración a Cloud Run para el backend y API (G5b).
+* **El Riesgo:** Cuando Cloud Run escala hacia abajo (*scale-down*), termina los contenedores. Si mata un contenedor abruptamente, los clientes conectados a ese nodo de SignalR experimentarán un corte feo.
+* **Mitigación propuesta:** Implementar *Graceful Shutdown* interceptando las señales de terminación (`SIGTERM`) para enviar un mensaje de cierre limpio a los clientes, forzándolos a reconectarse a un nodo sano de forma transparente antes de que el contenedor muera.
+
+---
+
+## 4. Analítica y Persistencia (Camino Frío)
+
+### 4.7. Evolución de Esquemas (Schema Drift) en el Data Lake
+* **Contexto:** Volcado de eventos crudos NDJSON a GCS y consulta vía BigQuery (G4).
+* **El Riesgo:** Cambios de hardware/firmware pueden introducir campos nuevos en el JSON (ej. `bateria_backup`). Si los esquemas son rígidos, esta data se pierde o rompe el pipeline.
+* **Mitigación propuesta:** Utilizar tipos de datos nativos `JSON` tanto en BigQuery como en Postgres (`JSONB`) para garantizar flexibilidad estructural sin modificar el código.
+
+### 4.8. Downsampling: Desarrollo Propio vs. TimescaleDB
+* **Contexto:** Evaluación de TimescaleDB descartada a favor de lógica propia en .NET (ADR-007 y AUD-028).
+* **Observación:** ¿Fue por evitar *vendor lock-in* o costos de Cloud SQL? TimescaleDB maneja *continuous aggregates* de forma gratuita, mientras que la solución propia añade complejidad y consumo de CPU en el worker. Requiere vigilancia sobre el costo de cómputo en volumen.
+
+---
+
+## 5. IoT Físico y Casos Borde de Base de Datos (Nuevos)
+
+### 5.9. Relojes Desincronizados (El "Viajero del Futuro")
+* **Contexto:** Dependencia del `timestamp` generado por el dispositivo físico.
+* **El Riesgo:** Un GPS tiene el reloj defectuoso y envía un evento con fecha de "mañana". Si se usa lógica de *Last-Write-Wins* (Punto 1.1), este evento futuro bloqueará permanentemente las actualizaciones válidas de hoy, porque ninguna será "mayor" que la de mañana.
+* **Mitigación propuesta:** El worker debe rechazar o etiquetar como anómalos los eventos cuyo timestamp venga más de *N* segundos en el futuro respecto al servidor NTP local.
+
+### 5.10. El Bloqueo Oculto por `DROP PARTITION`
+* **Contexto:** Retención de datos gestionada eliminando particiones viejas de PostgreSQL (`DROP PARTITION`) para no usar comandos `DELETE` pesados (ADR-007).
+* **El Riesgo:** Ejecutar un DDL como `DROP PARTITION` requiere momentáneamente un `ACCESS EXCLUSIVE LOCK` en la tabla principal. A 5.000 escrituras por segundo, ese bloqueo de microsegundos puede encolar suficientes transacciones en los workers como para generar *timeouts* en cascada.
+* **Mitigación propuesta:** Programar el proceso de limpieza (`CronJob` o `Worker`) para que se ejecute estrictamente en ventanas de bajo tráfico de la flota (ej. 3:00 AM) o usar estrategias de desanexado previo (`DETACH PARTITION CONCURRENTLY`).
+
+## 6. Caos de Red, Desorden y Costos Cloud
+
+### 6.11. La Manada en Estampida (Thundering Herd) en SignalR
+* **Contexto:** Tienes un hub de SignalR con cientos de usuarios (despachadores) conectados viendo el mapa en vivo.
+* **El Riesgo:** Si Cloud Run hace un despliegue de una nueva versión o hay un micro-corte de red en el balanceador de carga de GCP, los 500 clientes perderán la conexión WebSocket al mismo tiempo. Un milisegundo después, los 500 clientes intentarán reconectarse simultáneamente. Este pico repentino (la "estampida") puede tumbar la Minimal API por agotamiento de hilos (Thread Starvation) y saturar el Redis de *backplane*.
+* **Mitigación propuesta:** El cliente Angular de SignalR debe estar configurado con **Jitter + Exponential Backoff** en su política de reconexión. En lugar de que todos se reconecten en el segundo 0, se dispersan aleatoriamente (ej. unos a los 2s, otros a los 5s, otros a los 12s), suavizando la carga en el servidor.
+
+### 6.12. Desorden de Eventos (Out-of-Order) en el Push al Frontend
+* **Contexto:** Pub/Sub (GCP) garantiza entrega *at-least-once*, pero **no garantiza orden estricto** (a menos que uses *ordering keys*, lo cual limita el throughput masivamente).
+* **El Riesgo:** El vehículo emite la ubicación A (10:00:00) y la B (10:00:01). Por latencia de red, Pub/Sub entrega la B al worker primero y luego la A. Tu lógica de base de datos ya está protegida con *Last-Write-Wins* (Punto 1.1), pero ¿qué pasa con el push en vivo? Si el worker procesa B y lo manda por SignalR, y milisegundos después procesa A y lo manda, el marcador del vehículo en el mapa de *deck.gl* saltará hacia atrás visualmente, causando un efecto fantasma (*rubber-banding*).
+* **Mitigación propuesta:** El *Component Store* en Angular no debe aceptar ciegamente todo lo que llega del WebSocket. Debe mantener un registro del último `timestamp` recibido por vehículo y **descartar silenciosamente** cualquier delta entrante que sea más antiguo que el estado actual en memoria.
+
+### 6.13. La Píldora Envenenada (Poison Pill) y el Bucle de la Muerte
+* **Contexto:** Implementaste un replayer de la DLQ (AUD-027) para reenviar eventos fallidos.
+* **El Riesgo:** Un dispositivo sufre un fallo de firmware y envía un JSON corrupto (pero válido a nivel HTTP). Este *payload* llega al worker .NET y causa una excepción no controlada al intentar deserializar una coordenada (ej. manda un string "NULL" en lugar de un float). Falla, va a la DLQ. Tu administrador ejecuta el endpoint de replay de la DLQ. El mensaje vuelve a la cola principal, vuelve a crashear el worker, y vuelve a la DLQ. Has creado un bucle infinito que consume cómputo de Cloud Run ($$) sin resolver nada.
+* **Mitigación propuesta:** El proceso de *replay* no debe ser ciego. Los mensajes en la DLQ necesitan un atributo de `ReplayCount`. Si un mensaje se ha reintentado más de X veces, se clasifica permanentemente como "Poison Pill", se mueve a un *bucket* de cuarentena en Cloud Storage para análisis forense, y se elimina del flujo activo.
+
+### 6.14. El Agujero Negro del Presupuesto en BigQuery (Full Table Scan)
+* **Contexto:** Fase G4. Usas BigQuery mediante tablas externas apuntando a tu Data Lake en Cloud Storage (NDJSON).
+* **El Riesgo:** BigQuery cobra por bytes procesados (leídos). Si un desarrollador, o una futura pantalla de reportes en Angular, ejecuta un `SELECT * FROM telemetria WHERE device_id = '123'` sin filtrar por fecha, BigQuery leerá **absolutamente todos los archivos JSON** del Data Lake histórico para encontrar ese vehículo. En meses, esto puede fulminar tus US$200 de presupuesto en una sola consulta.
+* **Mitigación propuesta:** 1. Configurar la tabla externa particionada usando *Hive Partitioning* (`/raw/year=yyyy/month=mm/day=dd/`).
+  2. Forzar que BigQuery rechace cualquier consulta que no incluya un filtro `WHERE` sobre la columna de partición (fecha).
+  3. (Ya tienes algo genial aquí: mencionas en AUD-024 un límite `MaximumBytesBilled`, ¡asegúrate de que esté configurado a un nivel estricto en la API!).

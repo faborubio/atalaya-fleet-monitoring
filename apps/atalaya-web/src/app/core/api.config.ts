@@ -22,7 +22,7 @@ export const devApiConfig: ApiConfig = {
  * `firebase deploy`** (y recuerda añadir el dominio de Hosting a `cors_origins` en Terraform).
  * La selección dev/prod la hace `app.config.ts` por `isDevMode()`.
  */
-const PROD_API_BASE_URL = 'https://REEMPLAZAR-con-api_url-de-cloud-run.run.app';
+const PROD_API_BASE_URL = 'https://atalaya-api-aqeprs2exa-uc.a.run.app';
 export const prodApiConfig: ApiConfig = {
   baseUrl: PROD_API_BASE_URL,
   hubUrl: `${PROD_API_BASE_URL}/hubs/telemetry`,

@@ -19,5 +19,9 @@ resource "google_vpc_access_connector" "connector" {
   region        = var.region
   network       = google_compute_network.vpc.name
   ip_cidr_range = "10.8.0.0/28"
+  # El provider v6 exige fijar el rango de instancias (antes derivaba de throughput). Mínimo del
+  # conector = 2; lo acotamos a 3 (e2-micro) para no escalar de más en una ventana de dev.
+  min_instances = 2
+  max_instances = 3
   depends_on    = [google_project_service.enabled]
 }

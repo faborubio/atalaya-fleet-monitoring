@@ -106,6 +106,13 @@ resource "google_cloud_run_v2_service" "api" {
     }
   }
 
+  # El provider 6.x materializa el bloque `scaling` a NIVEL DE SERVICIO (modo automático,
+  # min/manual_instance_count=0) que no declaramos —escalamos por `template.scaling`—; ignorarlo
+  # evita un diff perpetuo que no converge. El escalado real lo fija el template.
+  lifecycle {
+    ignore_changes = [scaling]
+  }
+
   depends_on = [
     google_project_iam_member.api,
     google_secret_manager_secret_version.postgres_conn,
@@ -199,6 +206,12 @@ resource "google_cloud_run_v2_service" "worker" {
         }
       }
     }
+  }
+
+  # Igual que el API: ignora el bloque `scaling` de servicio que inyecta el provider (el escalado
+  # real lo fija template.scaling: una sola instancia por la caché de incidentes, AUD-017).
+  lifecycle {
+    ignore_changes = [scaling]
   }
 
   depends_on = [

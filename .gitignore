@@ -66,3 +66,6 @@ Thumbs.db
 .playwright/
 playwright-report/
 test-results/
+
+# Firebase Hosting (caché de deploy; firebase.json/.firebaserc sí se versionan)
+.firebase/

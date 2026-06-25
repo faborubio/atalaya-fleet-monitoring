@@ -3,9 +3,10 @@
 IaC del despliegue real en GCP (ADR-013). Reemplaza el AWS CDK (`infra/cdk/`). Define **todo** el
 plano de control: mensajería, datos, cómputo y hosting.
 
-> **Estado:** **G5a** (escrito + `terraform validate` ✅, imágenes que construyen) está hecho.
-> El **`apply` real (G5b)** cobra (Cloud SQL + Memorystore + Cloud Run always-on) → se ejecuta en una
-> ventana acotada y se hace **teardown** (G6). Ver §Costo.
+> **Estado:** **G5a** (escrito + `terraform validate` ✅) y **G5b** (`apply` real + smoke E2E en vivo,
+> 2026-06-25, [AUD-031](../../AUDIT.md)) **HECHOS** contra **fabian-portafolio**. La infra está **desplegada
+> y cobrando** (Cloud SQL + Memorystore + Cloud Run always-on) → **pendiente el `terraform destroy`** (teardown).
+> Ver §Costo. URLs: API `https://atalaya-api-aqeprs2exa-uc.a.run.app` · SPA `https://atalaya-dashboard.web.app`.
 
 ## Qué crea
 

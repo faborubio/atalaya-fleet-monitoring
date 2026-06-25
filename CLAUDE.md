@@ -55,7 +55,7 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
 
 ## 5. Estado actual
 
-**Fecha de actualización:** 2026-06-24 (cierre del backlog AWS-era; solo queda G5b)
+**Fecha de actualización:** 2026-06-25 (G5b desplegado y verificado E2E en GCP real; solo queda el teardown)
 **Fase:** 1 + 1.5 + ingesta desacoplada ([AUD-010](./AUDIT.md)) + **Fase 2 completa** (alertas
 [AUD-011](./AUDIT.md) + camino frío [AUD-012](./AUDIT.md)) + **productivización** (CDK
 [AUD-013](./AUDIT.md) + viewport [AUD-014](./AUDIT.md)) + **Fase 2.5 calidad de datos**
@@ -69,11 +69,15 @@ verificados contra el proyecto **real `fabian-portafolio`**. **G5a (IaC con Terr
 ([AUD-025](./AUDIT.md)) escrito y validado. **Backlog AWS-era COMPLETO**: mapa deck.gl + virtual scroll
 ([AUD-026](./AUDIT.md)), DLQ replay ([AUD-027](./AUDIT.md)), downsampling del histórico
 ([AUD-028](./AUDIT.md)), runbooks ([AUD-029](./AUDIT.md)), refresh-token ([AUD-030](./AUDIT.md)) — todos
-verificados E2E. **No quedan ítems de features.** **Lo único pendiente es G5b** (el `terraform apply`
-real, con costo): la **prep ya está hecha** (billing+Budget, ADC del usuario como Owner, bucket de
-tfstate `gs://atalaya-tfstate`, imágenes `api:v1`/`worker:v1` en Artifact Registry, config de prod del
-frontend cableada). Falta: `terraform apply` → rellenar `PROD_API_BASE_URL`+`cors_origins` → `firebase
-deploy` → smoke E2E en la nube → `terraform destroy`. Runbook en `infra/terraform/README.md`.
+verificados E2E. **No quedan ítems de features.** **G5b — despliegue real HECHO** ([AUD-031](./AUDIT.md)):
+`terraform apply` completo contra **fabian-portafolio** (Cloud SQL, Memorystore, Pub/Sub+DLQ, VPC connector,
+secrets, IAM, 2× Cloud Run, BigQuery) + SPA en **Firebase Hosting** (`https://atalaya-dashboard.web.app`) +
+**smoke E2E en vivo** de la cadena completa (`/ingest` 202 → Pub/Sub → worker → Cloud SQL + GCS → `/api/devices`
+200 con OIDC/RBAC; auth 401 sin token; CORS OK; `terraform plan` final = *No changes*). El `apply` real destapó
+7 bugs de config que el `validate` de G5a no veía (2 críticos del worker, IAM Pub/Sub, edición SQL, connector,
+tabla BQ, drift de scaling) — todos corregidos. **El roadmap del pivote a GCP (G0…G5) queda completo.** **Lo único
+pendiente es el teardown** (`terraform destroy`, ⚠️ ventana de costo ~US$70–120/mes encendido). API en Cloud Run:
+`https://atalaya-api-aqeprs2exa-uc.a.run.app`. Runbook en `infra/terraform/README.md`.
 
 ### Hecho
 - ✅ SAD v1.0.1 (ADR-001…011) + docs base. Repo en GitHub (12+ commits).
@@ -258,9 +262,13 @@ Auth (modo Dev en Development): `curl :3000/auth/dev-token?role=operador` → JW
 adquiere solo. Lecturas sin token → 401; con rol operador/admin → 200.
 
 ### Pendiente (próxima sesión)
-**No quedan ítems de features ni de backlog** — el producto está completo y verificado E2E. **Lo único
-pendiente es G5b** (el `terraform apply` real, ventana de costo diferida por decisión). La prep de G5b ya
-está hecha (ver §5 párrafo de estado y §7 roadmap G5). Para retomar G5b: `infra/terraform/README.md` (runbook).
+**No quedan ítems de features, backlog ni fases del pivote** — todo completo y verificado E2E, **G5b incluido**
+([AUD-031](./AUDIT.md), desplegado en `fabian-portafolio`). **Lo único pendiente es el teardown** (`terraform
+destroy`) para cerrar la ventana de costo (⚠️ ~US$70–120/mes encendido) — ejecutar cuando el usuario lo indique.
+⚠️ **Mientras no se haga el destroy, la infra está cobrando.** Para destruir: `D:\tools\terraform\terraform.exe
+-chdir=infra/terraform destroy` (el bucket del lake y el dataset BQ tienen protección; bórralos aparte si quieres
+limpiar datos). Runbook/§Costo en `infra/terraform/README.md`. Pendiente menor del usuario: revisar el bloque de
+**casos borde** que añadió al final de `AUDIT.md` (secciones 1–6) + un plan de portafolio.
 
 Backlog AWS-era **todo cerrado** (referencia rápida):
 - ✅ Mapa deck.gl + virtual scroll ([AUD-026](./AUDIT.md)) · ✅ DLQ replay ([AUD-027](./AUDIT.md)) ·
@@ -324,13 +332,12 @@ atalaya/
 
 ## 7. Próximos pasos sugeridos (para la nueva sesión)
 
-**Estado:** Fases 0→3 completas en AWS/LocalStack + **pivote a GCP G1/G2/G3/G4 verificados E2E** +
-**G5a (IaC Terraform) validado** + **backlog AWS-era COMPLETO** ([AUD-021](./AUDIT.md)…[AUD-030](./AUDIT.md)).
-Último commit: **refresh-token** (`ebe51fc`, AUD-030). **No quedan features.** **Lo único pendiente es G5b**
-(el `terraform apply` real, ventana de costo diferida por decisión): la prep ya está hecha (billing+Budget,
-ADC Owner, bucket de tfstate, imágenes en Artifact Registry, config prod del frontend) — ver §7 roadmap G5.
-Para retomar, leer §1 (banner de pivote) + §5 + [AUD-020](./AUDIT.md) (roadmap) + `infra/terraform/README.md`
-(runbook de G5b).
+**Estado:** Fases 0→3 completas en AWS/LocalStack + **pivote a GCP COMPLETO G1…G5** verificado E2E
+([AUD-021](./AUDIT.md)…[AUD-031](./AUDIT.md)) + **backlog AWS-era COMPLETO**. **G5b desplegado en la nube real**
+(`fabian-portafolio`, [AUD-031](./AUDIT.md)): API en Cloud Run + SPA en Firebase Hosting, smoke E2E en vivo OK.
+**No quedan features ni fases.** **Lo único pendiente es el teardown** (`terraform destroy`) — ⚠️ **la infra
+está cobrando mientras tanto** (~US$70–120/mes). Para retomar, leer §1 (banner de pivote) + §5 + el párrafo
+"Pendiente" + `infra/terraform/README.md` (§Costo/teardown).
 
 > **Flujo por fase G (acordado, [memoria] `gcp-phase-workflow`):** implementar → **verificar E2E real**
 > (no solo build/tests) → **revisión crítica** → aplicar el fix que surja → documentar en los .md →
@@ -372,23 +379,23 @@ Identity Platform; dashboard en modo firebase = `useFirebaseAuth=true` en `app.c
      CDK) + Dockerfiles api/worker + container-readiness (worker health en `$PORT`, CORS por `Cors:Origins`).
      `terraform validate` ✅ + imágenes que construyen ($0). Worker = **pull + min-instances=1** (decisión).
      Cierra el gap de IAM de la DLQ de Pub/Sub (G1).
-   - **G5b** (DIFERIDO AL FINAL por decisión, 2026-06-24). **Prep ya HECHA (sin costo):** billing+Budget ·
-     ADC del usuario como Owner (`gcloud auth application-default login`) · bucket de tfstate
-     `gs://atalaya-tfstate` (versionado) · `terraform init` con backend GCS + `apply -target` del Artifact
-     Registry (+ APIs) · imágenes `api:v1`/`worker:v1` **publicadas** en `us-central1-docker.pkg.dev/
-     fabian-portafolio/atalaya` · `prodApiConfig` del frontend cableado por `isDevMode()`. `terraform.tfvars`
-     (project_id/imágenes) existe local (gitignored). **Falta solo (con costo):** `terraform apply` completo
-     (Cloud SQL+Memorystore+Cloud Run) → rellenar `PROD_API_BASE_URL` (output `api_url`) + `cors_origins`
-     (dominio de Hosting) → `nx build atalaya-web` + `firebase deploy --only hosting` (poner
-     `useFirebaseAuth=true`) → smoke E2E → **`terraform destroy`**. Runbook en `infra/terraform/README.md`.
-     ⚠️ ~US$70–120/mes encendido → ventana acotada + teardown. [memoria] `g5b-deploy-readiness`.
-6. **G6 — Medición real** (k6 contra Pub/Sub real) + **script de teardown** (apagar Cloud SQL/Memorystore).
+   - **G5b** ✅ **HECHO** (2026-06-25, [AUD-031](./AUDIT.md)): `terraform apply` completo contra
+     **fabian-portafolio** (Cloud SQL+Memorystore+Pub/Sub+VPC+secrets+IAM+2×Cloud Run+BigQuery) → `PROD_API_BASE_URL`
+     (= `api_url` de Cloud Run) + `cors_origins` (dominios de Hosting) cableados → `nx build atalaya-web` +
+     `firebase deploy --only hosting` (`useFirebaseAuth=true`, sitio `atalaya-dashboard`) → **smoke E2E en vivo**
+     (ingest 202 → Pub/Sub → worker → Cloud SQL + GCS → `/api/devices` 200 OIDC; 401 sin token; CORS OK; `plan` final
+     = *No changes*). El `apply` real corrigió 7 bugs que el `validate` no veía (worker GCS/emulador, IAM Pub/Sub,
+     edición SQL, connector, tabla BQ, drift scaling; ver AUD-031 + [TS-008](./TROUBLESHOOTING.md)/[TS-009](./TROUBLESHOOTING.md)).
+     URLs: API `https://atalaya-api-aqeprs2exa-uc.a.run.app`, SPA `https://atalaya-dashboard.web.app`. Imágenes en
+     uso: `api:v1`/`worker:v3`. ⚠️ ~US$70–120/mes encendido → **falta el `terraform destroy`** (teardown). [memoria]
+     `g5b-deploy-readiness`.
+6. **G6 — Medición real** (k6 contra Pub/Sub real) + **`terraform destroy`** (apagar Cloud SQL/Memorystore/Cloud Run).
 
 ⚠️ **Costo**: BigQuery pay-per-byte (free-tier cubre dev); Cloud SQL/Memorystore cobran ociosos →
 Budget+Alert + teardown obligatorios.
 Backlog AWS-era de [AUD-015](./AUDIT.md): **todo hecho** (mapa deck.gl + virtual scroll ✅ AUD-026 ·
 DLQ replay ✅ AUD-027 · downsampling ✅ AUD-028 · runbooks ✅ AUD-029 · refresh-token ✅ AUD-030).
-**Solo queda el despliegue real G5b** (prep hecha; ver §7 roadmap G5).
+**Despliegue real G5b HECHO** ([AUD-031](./AUDIT.md)); **solo queda el teardown** (`terraform destroy`).
 
 > Al cerrar cada sesión: actualiza §5 (estado), añade entrada en AUDIT.md si hubo cambio
 > auditable, y registra en TROUBLESHOOTING.md cualquier error resuelto.

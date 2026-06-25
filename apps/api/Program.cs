@@ -120,6 +120,18 @@ else
     builder.Services.AddHostedService<TelemetryProcessor>();
 }
 
+// Generador de telemetría de demo de portafolio (ADR-014, ver DEMO.md). Solo con Demo:Enabled
+// (servicio de demo InMemory always-on); ausente en dev/tests/prod normal. Empuja por el mismo
+// ITelemetryPublisher que /ingest, así que reusa el pipeline (en InMemory → bus → SignalR en vivo).
+var demoOptions = builder.Configuration.GetSection("Demo").Get<DemoOptions>() ?? new DemoOptions();
+if (demoOptions.Enabled)
+{
+    if (useBroker)
+        Console.WriteLine("[WARN] Demo:Enabled con un transporte de broker; el generador publicaría al broker real. Úsalo solo con Telemetry:Transport=InMemory.");
+    builder.Services.AddSingleton(demoOptions);
+    builder.Services.AddHostedService<Atalaya.Api.Processing.DemoTelemetryGenerator>();
+}
+
 // Analítica con BigQuery sobre el data lake (G4, ADR-013). Se registra solo si hay dataset
 // configurado (Gcp:DatasetId) → ausente en base/tests (sin dependencia de BigQuery). El cliente usa
 // ADC (en dev, GOOGLE_APPLICATION_CREDENTIALS apunta a la service account de consulta).

@@ -49,6 +49,7 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
 | [README.md](./README.md) | Visión, stack, estructura, cómo empezar |
 | [AUDIT.md](./AUDIT.md) | Bitácora de auditorías por fase/cambio |
 | [DEPLOY.md](./DEPLOY.md) | Despliegue local (LocalStack hoy; emuladores GCP en el pivote) y nube (CDK→Terraform) |
+| [DEMO.md](./DEMO.md) | Plan de demo de portafolio en 2 niveles (InMemory always-on ~$0 + stack efímero). ADR-014 |
 | [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) | Errores encontrados y soluciones |
 | [RUNBOOKS.md](./RUNBOOKS.md) | Operación: qué hacer ante caídas, DLQ replay, retención, deploy, teardown |
 | **CLAUDE.md** | Este archivo: contexto entre sesiones |

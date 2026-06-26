@@ -24,6 +24,11 @@ import { TelemetryStreamService } from './telemetry-stream.service';
 @Injectable({ providedIn: 'root' })
 export class FleetStore {
   private static readonly COALESCE_MS = 100;
+  // Anti split-brain (AUDIT §7.16): si un dispositivo visible no recibe deltas en STALE_MS (push
+  // perdido por crash del worker entre el ACK y el envío a SignalR), se fuerza un refresco silencioso
+  // del read model. STALE_CHECK_MS = cadencia del barrido.
+  private static readonly STALE_MS = 30_000;
+  private static readonly STALE_CHECK_MS = 5_000;
 
   private readonly http = inject(HttpClient);
   private readonly config = inject(API_CONFIG);
@@ -31,6 +36,9 @@ export class FleetStore {
   private readonly destroyRef = inject(DestroyRef);
 
   private readonly byId = new Map<string, DeviceState>();
+  private readonly lastSeen = new Map<string, number>(); // último delta en vivo por dispositivo (ms)
+  private readonly refreshedStale = new Set<string>(); // ya refrescados en este episodio de stale
+  private viewport: string[] | null = null; // ids visibles (null = firehose)
   private wired = false; // subscripciones al stream: una sola vez por vida de la app
   private connected = false; // ciclo de conexión del hub (toggle con login/logout, G3)
   private appliedThisSecond = 0;
@@ -67,6 +75,8 @@ export class FleetStore {
     this.connected = false;
     await this.stream.disconnect();
     this.byId.clear();
+    this.lastSeen.clear();
+    this.refreshedStale.clear();
     this.devices.set([]);
     this.eventsPerSec.set(0);
     this.latencies = [];
@@ -100,6 +110,11 @@ export class FleetStore {
       this.latencies = [];
     }, 1000);
     this.destroyRef.onDestroy(() => clearInterval(tick));
+
+    // Barrido de datos obsoletos (AUDIT §7.16): re-sincroniza desde el read model si un dispositivo
+    // visible dejó de recibir deltas (push perdido), sin esperar a su próximo evento.
+    const staleTick = setInterval(() => this.checkStale(), FleetStore.STALE_CHECK_MS);
+    this.destroyRef.onDestroy(() => clearInterval(staleTick));
   }
 
   /**
@@ -107,6 +122,7 @@ export class FleetStore {
    * al firehose. Los dispositivos fuera del viewport conservan su último estado (se "congelan").
    */
   setViewport(deviceIds: string[] | null): void {
+    this.viewport = deviceIds;
     void this.stream.setViewport(deviceIds);
   }
 
@@ -116,11 +132,37 @@ export class FleetStore {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: (snapshot) => {
-          for (const d of snapshot) this.byId.set(d.deviceId, d);
+          const now = Date.now();
+          for (const d of snapshot) {
+            this.byId.set(d.deviceId, d);
+            // Baseline de "visto" solo para dispositivos nuevos: da una ventana de gracia antes de
+            // considerarlos obsoletos. No pisa el lastSeen de un delta en vivo previo.
+            if (!this.lastSeen.has(d.deviceId)) this.lastSeen.set(d.deviceId, now);
+          }
           this.devices.set([...this.byId.values()]);
         },
         error: () => void 0, // la API puede no estar lista; el próximo connect reintenta
       });
+  }
+
+  /**
+   * Detecta dispositivos visibles sin deltas recientes y dispara un único refresco silencioso por
+   * episodio (AUDIT §7.16). En modo viewport solo vigila los visibles (los demás se "congelan" a
+   * propósito, AUD-008). El dedup por `refreshedStale` evita martillar la API si el silencio persiste.
+   */
+  private checkStale(): void {
+    if (!this.live()) return;
+    const now = Date.now();
+    const candidates = this.viewport ?? [...this.byId.keys()];
+    let foundNew = false;
+    for (const id of candidates) {
+      const seen = this.lastSeen.get(id);
+      if (seen !== undefined && now - seen > FleetStore.STALE_MS && !this.refreshedStale.has(id)) {
+        this.refreshedStale.add(id);
+        foundNew = true;
+      }
+    }
+    if (foundNew) this.loadSnapshot();
   }
 
   private applyWindows(windows: DeviceState[][]): void {
@@ -131,6 +173,8 @@ export class FleetStore {
         const current = this.byId.get(d.deviceId);
         if (!current || d.seq >= current.seq) {
           this.byId.set(d.deviceId, d);
+          this.lastSeen.set(d.deviceId, now); // delta en vivo recibido (AUDIT §7.16)
+          this.refreshedStale.delete(d.deviceId); // sale del episodio de stale
           this.latencies.push(now - Date.parse(d.ts)); // evento→aplicación en cliente
           applied++;
         }

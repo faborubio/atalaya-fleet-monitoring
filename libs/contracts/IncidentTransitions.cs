@@ -8,16 +8,35 @@ namespace Atalaya.Contracts;
 public static class IncidentTransitions
 {
     /// <summary>
+    /// Cooldown por defecto (AUDIT §8.17): tras resolverse, un incidente no se reabre por la misma
+    /// regla y dispositivo durante esta ventana, ignorando telemetría ruidosa (sensor con <i>flapping</i>).
+    /// </summary>
+    public static readonly TimeSpan DefaultCooldown = TimeSpan.FromMinutes(5);
+
+    /// <summary>
     /// Decide el incidente resultante para una lectura. <c>Next</c> es el estado a persistir
     /// (o <c>null</c> si no hay nada que guardar); <c>Transition</c> indica si debe notificarse.
+    /// <para>
+    /// <paramref name="cooldown"/> (AUDIT §8.17, anti-<i>flapping</i>): si es &gt; 0 y la regla vuelve
+    /// a dispararse antes de que pasen <c>cooldown</c> desde que el incidente se resolvió, la reapertura
+    /// se <b>suprime</b> (no transiciona, no notifica). El tiempo se mide con el <c>Ts</c> del evento
+    /// (no reloj de pared), coherente con el orden por <c>seq</c>. <c>default</c> (cero) = sin cooldown.
+    /// </para>
     /// </summary>
-    public static (AlertIncident? Next, bool Transition) Decide(AlertIncident? current, RuleReading r)
+    public static (AlertIncident? Next, bool Transition) Decide(
+        AlertIncident? current, RuleReading r, TimeSpan cooldown = default)
     {
         var id = AlertIncident.Id(r.DeviceId, r.Rule);
 
         if (r.Signal == RuleSignal.Firing)
         {
-            // Abrir: no existe o estaba resuelto.
+            // Cooldown anti-flapping: resuelto hace poco → ignora el firing ruidoso, sin reabrir.
+            if (current is { Status: IncidentStatus.Resolved }
+                && cooldown > TimeSpan.Zero
+                && r.Ts - current.UpdatedAt < cooldown)
+                return (current, false);
+
+            // Abrir: no existe o estaba resuelto (y fuera del cooldown).
             if (current is null || current.Status == IncidentStatus.Resolved)
             {
                 var opened = new AlertIncident(

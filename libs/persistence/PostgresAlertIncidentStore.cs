@@ -11,9 +11,11 @@ namespace Atalaya.Persistence;
 /// decide las transiciones con <see cref="IncidentTransitions"/> y persiste por lote con
 /// <c>unnest … ON CONFLICT … DO UPDATE</c>; devuelve solo lo que transicionó.
 /// </summary>
-public sealed class PostgresAlertIncidentStore(IOptions<PostgresOptions> options) : IAlertIncidentStore
+public sealed class PostgresAlertIncidentStore(
+    IOptions<PostgresOptions> options, IncidentOptions? incidentOptions = null) : IAlertIncidentStore
 {
     private readonly string _cs = options.Value.ConnectionString;
+    private readonly TimeSpan _cooldown = (incidentOptions ?? new IncidentOptions()).Cooldown;
 
     // Caché de incidentes abiertos para no consultar la BD por cada lote de telemetría normal:
     // un evento normal emite señales Clear, pero solo importan si su clave tiene incidente abierto.
@@ -85,7 +87,7 @@ public sealed class PostgresAlertIncidentStore(IOptions<PostgresOptions> options
         foreach (var r in candidates)
         {
             current.TryGetValue(AlertIncident.Id(r.DeviceId, r.Rule), out var cur);
-            var (next, transition) = IncidentTransitions.Decide(cur, r);
+            var (next, transition) = IncidentTransitions.Decide(cur, r, _cooldown);
             if (next is null || !transition) continue;
             transitions.Add(next);
             lock (_gate)

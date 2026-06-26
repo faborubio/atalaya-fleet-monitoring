@@ -9,10 +9,11 @@ namespace Atalaya.Api.Services;
 /// <c>PostgresAlertIncidentStore</c>). Misma máquina de estados (<see cref="IncidentTransitions"/>),
 /// estado por <c>(deviceId, rule)</c>.
 /// </summary>
-public sealed class InMemoryAlertIncidentStore : IAlertIncidentStore
+public sealed class InMemoryAlertIncidentStore(IncidentOptions? options = null) : IAlertIncidentStore
 {
     private readonly ConcurrentDictionary<string, AlertIncident> _byKey = new();
     private readonly object _gate = new();
+    private readonly TimeSpan _cooldown = (options ?? new IncidentOptions()).Cooldown;
 
     public Task EnsureSchemaAsync(CancellationToken ct = default) => Task.CompletedTask;
 
@@ -25,7 +26,7 @@ public sealed class InMemoryAlertIncidentStore : IAlertIncidentStore
             foreach (var r in IncidentTransitions.Latest(readings))
             {
                 _byKey.TryGetValue(AlertIncident.Id(r.DeviceId, r.Rule), out var cur);
-                var (next, transition) = IncidentTransitions.Decide(cur, r);
+                var (next, transition) = IncidentTransitions.Decide(cur, r, _cooldown);
                 if (next is null) continue;
                 _byKey[next.IncidentId] = next;
                 if (transition) transitions.Add(next);

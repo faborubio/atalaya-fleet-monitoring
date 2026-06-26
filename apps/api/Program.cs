@@ -21,6 +21,11 @@ builder.Services.AddHealthChecks(); // las comprobaciones de dependencias se añ
 // Registro de viewport (AUD-008): compartido por el hub y el forwarder/procesador.
 builder.Services.AddSingleton<Atalaya.Api.Processing.ViewportRegistry>();
 
+// Cooldown anti-flapping de incidentes (AUDIT §8.17, sección "Alerts"). Lo consume el store
+// (InMemory o Postgres). Registrado sin condición para cubrir ambos transportes.
+builder.Services.AddSingleton(
+    builder.Configuration.GetSection("Alerts").Get<IncidentOptions>() ?? new IncidentOptions());
+
 // Auth de lecturas (AUD-015 D, SAD §6.1): JWT Bearer con RBAC operador/admin. Flag Auth:Mode
 // (Disabled/Dev/Oidc). En Disabled no registra nada (base/tests sin auth, como el token vacío).
 var authOptions = builder.Configuration.GetSection("Auth").Get<AuthOptions>() ?? new AuthOptions();

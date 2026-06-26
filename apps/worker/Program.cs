@@ -20,6 +20,9 @@ builder.Services.AddOpenTelemetry().WithMetrics(m => m
 builder.Services.AddAtalayaPersistence(builder.Configuration);
 builder.Services.AddAtalayaRedis(builder.Configuration);
 builder.Services.AddSingleton<TelemetryBatchProcessor>(); // lógica de lote común a todos los brokers
+// Cooldown anti-flapping de incidentes (AUDIT §8.17, sección "Alerts"): lo consume el store de incidentes.
+builder.Services.AddSingleton(
+    builder.Configuration.GetSection("Alerts").Get<IncidentOptions>() ?? new IncidentOptions());
 builder.Services.AddHostedService<WorkerHealthService>();  // health/live + health/ready (Fase 3)
 builder.Services.AddSingleton<IPoisonQuarantine, NullPoisonQuarantine>(); // default; Gcp lo sobreescribe
 

@@ -90,4 +90,49 @@ public sealed class AlertRulesTests
         var (_, transition) = IncidentTransitions.Decide(null, Clear());
         Assert.False(transition);
     }
+
+    // Cooldown anti-flapping (AUDIT §8.17): tras resolver, un firing dentro de la ventana no reabre.
+    private static readonly TimeSpan Cooldown = TimeSpan.FromMinutes(5);
+
+    [Fact]
+    public void Cooldown_suprime_la_reapertura_dentro_de_la_ventana()
+    {
+        var (open, _) = IncidentTransitions.Decide(null, Firing(AlertSeverity.Critical, ts: "2026-06-22T10:00:00Z"));
+        var (resolved, _) = IncidentTransitions.Decide(open, Clear(ts: "2026-06-22T10:01:00Z"));
+
+        // Firing 2 min después de resolver, con cooldown de 5 min → no reabre (telemetría ruidosa).
+        var (next, transition) = IncidentTransitions.Decide(
+            resolved, Firing(AlertSeverity.Critical, ts: "2026-06-22T10:03:00Z"), Cooldown);
+
+        Assert.False(transition);
+        Assert.Equal(IncidentStatus.Resolved, next!.Status);
+    }
+
+    [Fact]
+    public void Tras_el_cooldown_un_firing_reabre_el_incidente()
+    {
+        var (open, _) = IncidentTransitions.Decide(null, Firing(AlertSeverity.Critical, ts: "2026-06-22T10:00:00Z"));
+        var (resolved, _) = IncidentTransitions.Decide(open, Clear(ts: "2026-06-22T10:01:00Z"));
+
+        // Firing 6 min después de resolver (fuera del cooldown de 5 min) → reabre.
+        var (next, transition) = IncidentTransitions.Decide(
+            resolved, Firing(AlertSeverity.Critical, ts: "2026-06-22T10:07:00Z"), Cooldown);
+
+        Assert.True(transition);
+        Assert.Equal(IncidentStatus.Open, next!.Status);
+    }
+
+    [Fact]
+    public void Sin_cooldown_un_firing_reabre_de_inmediato()
+    {
+        var (open, _) = IncidentTransitions.Decide(null, Firing(AlertSeverity.Critical, ts: "2026-06-22T10:00:00Z"));
+        var (resolved, _) = IncidentTransitions.Decide(open, Clear(ts: "2026-06-22T10:01:00Z"));
+
+        // Sin cooldown (default): la reapertura inmediata es una transición (comportamiento previo).
+        var (next, transition) = IncidentTransitions.Decide(
+            resolved, Firing(AlertSeverity.Critical, ts: "2026-06-22T10:01:30Z"));
+
+        Assert.True(transition);
+        Assert.Equal(IncidentStatus.Open, next!.Status);
+    }
 }

@@ -36,6 +36,44 @@ proyecto.
 
 ---
 
+## AUD-032 — Cierre de casos borde §7–§9 + realismo visual de la demo (2026-06-25)
+
+**Fase:** Post-pivote (proyecto completo). Cierre de la auto-auditoría de casos borde + pulido visual del dashboard de demo.
+**Alcance:** (A) los casos borde pendientes de la "Revisión Arquitectónica" (§7.15–7.16, §8.17–8.18, §9.19–9.21); (B) arreglos visuales del mapa de la demo de portafolio (ADR-014).
+**Auditor:** Fabián Rubio + Claude
+
+### A. Casos borde (detalle en la sección "Revisión Arquitectónica")
+| Sev | Caso | Acción | Estado |
+|-----|------|--------|--------|
+| 🟡 | §8.17 Flapping de alertas | **Cooldown** en `IncidentTransitions.Decide` (`Alerts:CooldownSeconds`, default 300 s) | Resuelto |
+| 🟡 | §7.16 Split-brain (push perdido) | **Stale-timer** en `FleetStore` (refresco silencioso del read model) | Resuelto |
+| ✅ | §7.15 Promedio de coordenadas | Verificado: el downsampling nunca promedia lat/lng | Ya mitigado |
+| ✅ | §8.18 "Día 31" particiones | Verificado: particiones perezosas idempotentes en el insert (no hay cron) | Ya mitigado |
+| 🔵 | §9.19/9.20/9.21 | Deuda consciente / teóricos en el alcance actual | Documentado |
+
+### B. Realismo visual del mapa de demo
+- **Región → Santiago de Chile** (antes CDMX): `DemoOptions.Lat/Lng`, simulador `fleet.ts` y fallback del mapa.
+- **Recorrido por calles reales**: geometría real de **OpenStreetMap** (Overpass) de 5 arterias (Alameda, Providencia–Apoquindo, Vicuña Mackenna, Gran Avenida, Irarrázaval), promediada a una línea central por corredor (datos © OpenStreetMap, ODbL) y **bakeada estáticamente** (sin llamadas en runtime, $0). Los vehículos interpolan sobre la polilínea y rebotan → no cruzan edificios.
+- **Velocidad física**: paso = `speed·(intervalMs/3.6e6)/111` (km/h reales), antes un factor fijo irreal; nuevo `Demo:SpeedFactor` (default 1.0).
+- **Semáforos** (stop-and-go): paradas en rojo cada ~250–450 m (50% prob.), 15–40 s detenido.
+- **Burbuja de info** (deck.gl `getTooltip`): ficha del activo al pasar el cursor (tipo 🚚/📡/🏭 derivado del id, velocidad, rumbo, combustible, motor, posición, antigüedad).
+- **Auto-recentrado**: el mapa se centra sobre la flota la primera vez que llegan datos (cierra el bug de quedarse en la región del fallback).
+
+### Verificaciones
+- [x] **51/51** tests .NET (incl. 3 nuevos del cooldown).
+- [x] Tests + lint de `simulator` y `atalaya-web` OK.
+- [x] Geometría OSM validada: sin saltos (gap máx 0.23–0.29 km/ruta); las arterias conectan en Plaza Italia.
+- [x] Demo en vivo local (InMemory): flota sobre las avenidas, stop-and-go (≈ tráfico real), burbuja OK.
+
+### Conclusión
+✅ Auto-auditoría de casos borde **completa** (nada pendiente). Demo de portafolio con realismo notablemente mayor.
+Pendiente operativo: la **demo Nivel 1 desplegada** tomará estos cambios en su próximo redeploy
+(`nx build atalaya-web --configuration=demo` + `firebase deploy --only hosting:atalaya-demo`; el backend de demo
+toma los nuevos defaults sin tocar Terraform). Nota: las polilíneas son 5 corredores promediados a centerline,
+no el callejero completo (cobertura total requeriría un servicio de routing, descartado por costo).
+
+---
+
 ## AUD-031 — Pivote a GCP · G5b: despliegue real en la nube + smoke E2E (2026-06-25)
 
 **Fase:** Pivote a GCP (ADR-013), cierre del roadmap. G5a ([AUD-025](#aud-025)) escribió el IaC; G5b lo **aplica de verdad**.
@@ -1758,12 +1796,16 @@ El Riesgo: Promediar métricas continuas (como velocidad, temperatura o combusti
 
 Mitigación propuesta: El algoritmo de agregación (ITelemetryArchive.QueryDownsampledAsync) debe diferenciar el tipo de dato. Para las métricas, usa promedios (AVG). Para las coordenadas espaciales, debe tomar siempre el último punto del intervalo (o el primero), o aplicar un algoritmo de simplificación de geometría espacial como Douglas-Peucker.
 
+* **✅ Estado real (verificado 2026-06-25):** **No aplica hoy.** `QueryDownsampledAsync` ([`PostgresTelemetryArchive.cs`](./libs/persistence/PostgresTelemetryArchive.cs) L112-147) **solo promedia métricas escalares** (`avg(speed_kmh)`, `avg(fuel_pct)`, `avg(engine_temp_c)`) — las **coordenadas nunca entran al `AVG`** (el `TelemetryBucket` no las lleva). El histórico de ruta (si se pidiera) usa puntos crudos vía `QueryAsync`, y el mapa pinta posiciones actuales (`ScatterplotLayer`), sin estela. El "promedio en medio del lago" es imposible. *(Si algún día se dibuja una cola de ruta downsampleada, ahí sí: tomar el último punto del intervalo o Douglas-Peucker.)*
+
 7.16. El "Split-Brain" (Desfase entre Base de Datos y UI)
 Contexto: El Worker .NET consume de Pub/Sub, actualiza Postgres (device_state) y luego emite el delta a SignalR.
 
 El Riesgo: ¿Qué pasa si la escritura en Postgres es exitosa, pero justo en ese milisegundo el worker crashea por falta de memoria o Pub/Sub reinicia el contenedor antes de hacer el envío a SignalR? El mensaje se da por procesado (ACK). La base de datos tiene la ubicación actualizada, pero el cliente web (Angular) nunca recibe el push. El tablero en vivo queda desactualizado silenciosamente hasta que el camión envíe su siguiente punto.
 
 Mitigación propuesta: Si bien implementar un patrón Outbox completo puede ser muy complejo para el alcance actual, la solución pragmática es que el cliente Angular tenga un temporizador de "Stale Data". Si no recibe un delta de un dispositivo visible en X segundos, fuerza un refresco silencioso (GET /api/devices/{id}) para re-sincronizar su estado con la base de datos.
+
+* **✅ Estado real (HECHO 2026-06-25):** Era un gap real (leve) → **implementado** la mitigación pragmática (sin Outbox). El `FleetStore` ahora lleva `lastSeen` por dispositivo y un **barrido periódico** (`checkStale`, cada 5 s): si un dispositivo **visible** lleva > 30 s sin deltas en vivo, dispara un **refresco silencioso del read model** (`GET /api/devices`, re-sincroniza desde Postgres) ([`fleet-store.ts`](./apps/atalaya-web/src/app/core/telemetry/fleet-store.ts)). Dedup por episodio (`refreshedStale`) para no martillar la API si el silencio persiste; se limpia al llegar un delta vivo. En modo viewport solo vigila los visibles (los demás se "congelan" a propósito, AUD-008). Cierra la ventana split-brain (ACK + escritura en BD pero push perdido).
 
 8. Resiliencia Operativa
 8.17. Tormentas de Alertas por "Flapping" (Cascading Alarms)
@@ -1773,6 +1815,8 @@ El Riesgo: Un sensor de velocidad está defectuoso y oscila entre 0 km/h y 120 k
 
 Mitigación propuesta: Implementar un período de Cooldown (Enfriamiento) en las reglas de alerta. Por ejemplo, una vez que un incidente se resuelve, no se puede volver a abrir por la misma regla en el mismo dispositivo durante al menos 5 minutos, ignorando temporalmente la telemetría ruidosa.
 
+* **✅ Estado real (HECHO 2026-06-25):** La histéresis sola (bandas firing/clear separadas) no frena un sensor que oscila full-rango → gap real → **implementado el cooldown**. La máquina pura `IncidentTransitions.Decide` acepta un parámetro `cooldown` ([`IncidentTransitions.cs`](./libs/contracts/IncidentTransitions.cs)): tras resolverse, una regla **no reabre** incidente en el mismo `(device, rule)` hasta que pasa la ventana, midiendo el tiempo con el **`Ts` del evento** (no reloj de pared, coherente con el orden por `seq`). Configurable vía `Alerts:CooldownSeconds` (default **300 s**; 0 = sin cooldown) → `IncidentOptions`, inyectado en ambos stores (InMemory + Postgres). 3 tests unitarios nuevos (suprime dentro de ventana / reabre tras la ventana / sin cooldown reabre de inmediato). `default` (cero) preserva el comportamiento previo de los tests directos.
+
 8.18. El Colapso del "Día 31" (El Abismo de las Particiones)
 Contexto: Tu telemetría está particionada por tiempo en PostgreSQL para poder hacer retención O(1) con DROP PARTITION (ADR-007).
 
@@ -1780,25 +1824,32 @@ El Riesgo: ¿Quién crea las nuevas particiones del futuro? Si tienes un script 
 
 Mitigación propuesta: El sistema debe pre-crear las particiones con un margen de seguridad amplio (ej. 7 a 14 días en el futuro). Además, configurar una alerta de infraestructura que avise si el "colchón" de particiones futuras cae por debajo de 3 días.
 
+* **✅ Estado real (verificado 2026-06-25):** **Ya mitigado, mejor que la propuesta.** No hay cron de medianoche que pueda fallar en silencio: las particiones se crean **perezosamente dentro del propio `AppendAsync`** ([`PostgresTelemetryArchive.cs`](./libs/persistence/PostgresTelemetryArchive.cs) L52-54) — antes de cada insert se hace `EnsurePartitionAsync` de las fechas del lote, con `CREATE TABLE IF NOT EXISTS … PARTITION OF` **idempotente y tolerante a carreras** entre consumidores (captura `42P07`/`23505`/`23P01`, L187-194). El error "no partition found for routing" **no puede ocurrir** porque la partición se garantiza en la misma transacción de escritura. Residual menor: un DDL barato por lote del primer evento de cada día nuevo (insignificante). *(Una pre-creación con colchón + alerta de infra serían un plus operativo si se externaliza la creación, pero hoy el modelo perezoso elimina el modo de fallo descrito.)*
+
 ---
 
-## 9. Casos borde detectados por análisis de código (Claude) — ⏳ pendientes de revisión conjunta
+## 9. Casos borde detectados por análisis de código (Claude) — ✅ revisados con el usuario (2026-06-25)
 
-> Hallados leyendo el código durante la auto-auditoría del 2026-06-25. Llevan un **análisis preliminar**
-> verificado contra el código, pero la decisión (documentar vs implementar) se toma **junto al usuario**
-> en la próxima sesión. Numerados a partir de 9.19 para no chocar con los anteriores.
+> Hallados leyendo el código durante la auto-auditoría del 2026-06-25. Revisados junto al usuario:
+> **decisión = documentar los tres** (son teóricos en el alcance actual; implementar solo si se modela
+> el ciclo de vida real del dispositivo / se automatiza el replay). Numerados a partir de 9.19.
 
 ### 9.19. Reinicio de dispositivo reinicia el `seq` (el reverso del §1.1)
 * **Contexto:** el orden y la idempotencia se basan en `seq` (secuencia por dispositivo): `WHERE EXCLUDED.seq >= device_state.seq` en el upsert, y `d.seq >= current.seq` en el front.
 * **El Riesgo:** si un dispositivo se reinicia (corte de energía/firmware) y su `seq` vuelve a empezar en 1, el guard **descartará** todos sus eventos nuevos (seq bajo) hasta que el contador vuelva a superar el `seq` máximo previo. El vehículo se "congela" en el mapa aunque esté reportando.
-* **Análisis preliminar:** real, pero requiere un dispositivo que reinicie su contador (el simulador no lo hace, así que no se ve en demo). **Mitigación:** un `boot-id`/epoch por dispositivo (resetea la línea de comparación al detectar boot nuevo), o aceptar el evento si su `ts` es claramente más reciente aunque el `seq` baje. **Voto:** documentar; implementar solo si se modela el ciclo de vida real del dispositivo.
+* **Análisis preliminar:** real, pero requiere un dispositivo que reinicie su contador (el simulador no lo hace, así que no se ve en demo). **Mitigación:** un `boot-id`/epoch por dispositivo (resetea la línea de comparación al detectar boot nuevo), o aceptar el evento si su `ts` es claramente más reciente aunque el `seq` baje. **Decisión (2026-06-25):** documentar; implementar solo si se modela el ciclo de vida real del dispositivo (epoch/boot-id).
 
 ### 9.20. Durabilidad del borde de ingesta (el 202 es previo a la durabilidad)
 * **Contexto:** `/ingest` encola en un canal en memoria (`QueueingTelemetryPublisher`) y responde **202** antes de publicar al broker (desacople de AUD-010).
 * **El Riesgo:** si la API muere con eventos en el buffer en RAM (crash/SIGKILL sin gracia), esa ventana se **pierde** silenciosamente — el cliente ya recibió 202. El graceful shutdown drena en apagado ordenado, pero no cubre un kill duro.
-* **Análisis preliminar:** ya anotado como deuda consciente (AUD-010/015 B). **Mitigación real:** ingesta serverless durable en el borde (API Gateway/Cloud Run → publica directo a Pub/Sub y responde tras el ack del broker), a cambio de latencia. **Voto:** documentar; es un trade-off de diseño consciente, no un bug.
+* **Análisis preliminar:** ya anotado como deuda consciente (AUD-010/015 B). **Mitigación real:** ingesta serverless durable en el borde (API Gateway/Cloud Run → publica directo a Pub/Sub y responde tras el ack del broker), a cambio de latencia. **Decisión (2026-06-25):** documentar; es un trade-off de diseño consciente, no un bug.
 
 ### 9.21. Replay de la DLQ ante fallos transitorios no recuperados
 * **Contexto:** `POST /api/admin/dlq/replay` re-encola los dead-letters al topic principal (ADR-006).
 * **El Riesgo:** si los mensajes cayeron a la DLQ por un fallo **transitorio aún vigente** (p.ej. Postgres caído) y se dispara el replay sin esperar a la recuperación, vuelven a fallar (`Nack`) y re-caen a la DLQ → mini-tormenta de reproceso (consume cómputo, no avanza).
-* **Análisis preliminar:** hoy el replay es **manual** (endpoint admin, RBAC admin), así que es teórico — un operador no lo dispara con la BD caída. **Mitigación si se automatiza:** gate del replay por readiness (no reproducir si las deps no están `ready`) y/o backoff. **Voto:** documentar; relevante solo si el replay se vuelve automático/programado.
+* **Análisis preliminar:** hoy el replay es **manual** (endpoint admin, RBAC admin), así que es teórico — un operador no lo dispara con la BD caída. **Mitigación si se automatiza:** gate del replay por readiness (no reproducir si las deps no están `ready`) y/o backoff. **Decisión (2026-06-25):** documentar; relevante solo si el replay se vuelve automático/programado (entonces: gate por readiness + backoff).
+
+
+
+Admin (subes documentos)	admin@demo.local	Pr7aZqVuhDFx4XIMf6wT
+Visitante (solo consulta)	visitante@demo.local	visita1234

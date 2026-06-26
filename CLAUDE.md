@@ -56,7 +56,7 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
 
 ## 5. Estado actual
 
-**Fecha de actualización:** 2026-06-25 (G5b hecho+teardown · demo Nivel 1 EN VIVO + Nivel 2 implementado · auto-auditoría de casos borde con 6.11/6.13 hechos)
+**Fecha de actualización:** 2026-06-25 (G5b hecho+teardown · demo Nivel 1 EN VIVO + Nivel 2 implementado · auto-auditoría de casos borde §1–§9 COMPLETA: 6.11/6.13/8.17/7.16 implementados, resto documentado · arreglos visuales de demo HECHOS: Santiago + calles reales OSM + velocidad física + semáforos + burbuja, AUD-032)
 **Fase:** 1 + 1.5 + ingesta desacoplada ([AUD-010](./AUDIT.md)) + **Fase 2 completa** (alertas
 [AUD-011](./AUDIT.md) + camino frío [AUD-012](./AUDIT.md)) + **productivización** (CDK
 [AUD-013](./AUDIT.md) + viewport [AUD-014](./AUDIT.md)) + **Fase 2.5 calidad de datos**
@@ -153,7 +153,15 @@ cero pérdida (59.200/59.200). Deuda menor: reintento/persistencia ante `Publish
   histéresis); `IncidentTransitions.Decide` (puro) abre/escala/resuelve; store `IAlertIncidentStore`
   (`alert_incidents`, una fila por `(device,rule)`, Postgres+InMemory). Solo se notifican transiciones.
   Canal Redis `atalaya:alerts:new`; evento `alertsRaised` (lleva `AlertIncident[]`); `/api/alerts` =
-  activos. Frontend `AlertStore` indexa por `incidentId`.
+  activos. Frontend `AlertStore` indexa por `incidentId`. **Cooldown anti-flapping (AUDIT §8.17)**:
+  `Decide` toma un `cooldown` (config `Alerts:CooldownSeconds`, default 300 s → `IncidentOptions` en
+  ambos stores); tras resolver, no reabre en la misma `(device,rule)` hasta pasar la ventana, medido
+  con el `Ts` del evento. `default` (cero) = sin cooldown.
+- **Anti split-brain en cliente (AUDIT §7.16)**: `FleetStore` lleva `lastSeen` por dispositivo +
+  barrido `checkStale` (cada 5 s): si un dispositivo **visible** lleva > 30 s sin deltas, dispara un
+  `loadSnapshot()` silencioso (re-sync del read model). Dedup por episodio (`refreshedStale`, se limpia
+  al llegar un delta); en modo viewport solo vigila los visibles. Cierra el hueco de un push perdido
+  tras el ACK + escritura en BD.
 - **Camino frío (AUD-012)**: `ITelemetryArchive` (tabla `telemetry` particionada por día, retención
   O(1)) + `IRawEventArchive` (S3, solo en worker; `NullRawEventArchive` en InMemory). Endpoint
   `/api/history?deviceId&minutes&limit`. Worker config `Aws:Bucket` (data lake). S3 con `ForcePathStyle`.
@@ -272,17 +280,29 @@ adquiere solo. Lecturas sin token → 401; con rol operador/admin → 200.
 - **Nivel 2 implementado y validado con `plan`** (scripts `infra/demo-up.ps1`/`demo-down.ps1`, sitio
   `atalaya-live`, `firebase.json` multi-sitio) — **falta solo el ensayo pagado** (up real → smoke → down).
 
-**Casos borde / auto-auditoría ([AUDIT.md](./AUDIT.md) "Revisión Arquitectónica", secciones 1–9):** revisión
-verificada-contra-código de los 14 puntos del usuario (§1–6); **mayoría ya mitigados**. Hechos a raíz de eso:
-**6.11** reconnect SignalR con backoff+jitter y **6.13** cuarentena forense de veneno (`IPoisonQuarantine`).
-**Pendiente de revisar mañana:** los casos nuevos que añadió el usuario (**§7.15–7.16, §8.17–8.18**) y los que
-detectó Claude por código (**§9.19–9.21**) — varios con mitigación parcial probable (p.ej. 8.18 particiones
-perezosas, 7.16 at-least-once); confirmarlos contra el código y decidir documentar vs implementar.
+**Casos borde / auto-auditoría ([AUDIT.md](./AUDIT.md) "Revisión Arquitectónica", secciones 1–9): COMPLETA.**
+Revisión verificada-contra-código de los 14 puntos del usuario (§1–6) + los nuevos (§7–§8) + los hallados por
+Claude (§9). **Implementados a raíz de eso:** **6.11** reconnect SignalR backoff+jitter · **6.13** cuarentena
+forense de veneno · **8.17** cooldown anti-flapping de incidentes (`Alerts:CooldownSeconds`, default 300 s) ·
+**7.16** stale-timer en `FleetStore` (refresco silencioso del read model si un dispositivo visible queda mudo).
+**Verificados como ya-mitigados (mejor que la propuesta):** **7.15** (las coordenadas nunca se promedian en el
+downsampling) · **8.18** (particiones perezosas idempotentes en el insert, no hay cron que falle). **Documentados
+como deuda consciente / teóricos:** **9.19** (reset de `seq` por reinicio de dispositivo → boot-id futuro) ·
+**9.20** (durabilidad del 202 previo a publicar) · **9.21** (replay manual ante fallo transitorio). No queda
+ningún caso borde pendiente. Tests: **51/51** .NET (incl. 3 nuevos del cooldown) + front + lint OK.
 
-**Agenda acordada para mañana (sesión nueva):** (1) **ensayo pagado del Nivel 2** (`demo-up` → consola GCP →
-`demo-down`, ~US$1–2, ~25 min); (2) **arreglos visuales** del dashboard; (3) **revisar los casos borde
-§7–§9** de AUDIT.md. Nota: la demo Nivel 1 tomará el fix 6.11 en su próximo redeploy (`nx build
---configuration=demo` + `firebase deploy --only hosting:atalaya-demo`).
+**Arreglos visuales del dashboard de demo — HECHOS** ([AUD-032](./AUDIT.md)): mapa centrado en **Santiago de
+Chile**; los puntos **recorren calles reales** (geometría de OpenStreetMap/Overpass de 5 arterias —Alameda,
+Providencia–Apoquindo, Vicuña Mackenna, Gran Avenida, Irarrázaval—, bakeada estática, $0); **velocidad física**
+(km/h reales, `Demo:SpeedFactor`) con **semáforos** (stop-and-go); **burbuja de info** al hover (deck.gl
+`getTooltip`, tipo 🚚/📡/🏭 + métricas); **auto-recentrado** del mapa sobre la flota al llegar datos. Verificado
+en demo local InMemory. (Modelo de movimiento en [`DemoFleet.cs`](./apps/api/Processing/DemoFleet.cs) + simulador
+[`fleet.ts`](./apps/simulator/src/lib/fleet.ts).)
+
+**Agenda restante:** (1) **ensayo pagado del Nivel 2** (`demo-up` → consola GCP → `demo-down`, ~US$1–2, ~25 min).
+(2 ✅ arreglos visuales hechos.) (3 ✅ casos borde §7–§9 cerrados.) Nota: la **demo Nivel 1 desplegada** tomará
+los fixes 6.11/7.16 **y los visuales** en su próximo redeploy (`nx build atalaya-web --configuration=demo` +
+`firebase deploy --only hosting:atalaya-demo`; el backend de demo toma los nuevos defaults sin tocar Terraform).
 
 Backlog AWS-era **todo cerrado** (referencia rápida):
 - ✅ Mapa deck.gl + virtual scroll ([AUD-026](./AUDIT.md)) · ✅ DLQ replay ([AUD-027](./AUDIT.md)) ·

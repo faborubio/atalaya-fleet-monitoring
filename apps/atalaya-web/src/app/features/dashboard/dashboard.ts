@@ -136,6 +136,7 @@ export class Dashboard implements AfterViewInit {
   });
 
   private lastViewportSig = '';
+  private fitted = false; // ya se centró el mapa sobre datos reales (no el fallback)
 
   constructor() {
     // Repinta la capa de puntos cuando cambia el snapshot coalescido o el viewport (una pasada por
@@ -143,7 +144,17 @@ export class Dashboard implements AfterViewInit {
     effect(() => {
       const devices = this.fleet.devices();
       const visible = this.visibleIds();
-      if (this.deck) this.deck.setProps({ layers: this.buildLayers(devices, visible) });
+      if (!this.deck) return;
+      // Si el mapa se montó sin datos (init antes del snapshot), usó el fallback; al llegar la flota
+      // recentra una sola vez sobre sus límites reales (evita quedarse mirando la región equivocada).
+      if (!this.fitted && devices.length > 0) {
+        this.fitted = true;
+        const c = this.initialCenter();
+        this.deck.setProps({
+          initialViewState: { longitude: c.lng, latitude: c.lat, zoom: c.zoom, pitch: 0, bearing: 0 },
+        });
+      }
+      this.deck.setProps({ layers: this.buildLayers(devices, visible) });
     });
 
     // Sincroniza el viewport con el servidor solo cuando cambia el conjunto (evita spam).
@@ -178,14 +189,19 @@ export class Dashboard implements AfterViewInit {
         bearing: 0,
       },
       controller: true, // pan + zoom reales
+      pickingRadius: 6, // tolerancia de hover (los puntos son pequeños)
       layers: this.buildLayers(this.fleet.devices(), this.visibleIds()),
+      getTooltip: ({ object }: { object?: DeviceState }) =>
+        object ? this.tooltip(object) : null,
     });
+    // Si ya había datos al montar, el centro inicial ya fue sobre la flota; no recentres de nuevo.
+    this.fitted = this.bounds() !== null;
   }
 
   private initialCenter(): { lng: number; lat: number; zoom: number } {
     const b = this.bounds();
-    if (!b) return { lng: -99.13, lat: 19.43, zoom: 9 }; // CDMX (región del simulador)
-    return { lng: (b.minLng + b.maxLng) / 2, lat: (b.minLat + b.maxLat) / 2, zoom: 10 };
+    if (!b) return { lng: -70.6489, lat: -33.4789, zoom: 10.5 }; // Santiago de Chile (región de la flota)
+    return { lng: (b.minLng + b.maxLng) / 2, lat: (b.minLat + b.maxLat) / 2, zoom: 10.5 };
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -226,7 +242,7 @@ export class Dashboard implements AfterViewInit {
       stroked: true,
       getLineColor: [13, 17, 23, 255] as RGBA,
       lineWidthMinPixels: 1,
-      pickable: false,
+      pickable: true, // habilita la burbuja de info al pasar por encima
       updateTriggers: {
         // Recolorea cuando cambia el conjunto visible (el zoom de viewport).
         getFillColor: visible === null ? 'all' : visible.size,
@@ -240,5 +256,55 @@ export class Dashboard implements AfterViewInit {
     if (visible !== null && !visible.has(d.deviceId)) return [110, 118, 129, 90];
     const t = Math.min(1, d.speedKmh / 120); // verde (lento) → ámbar (rápido)
     return [Math.round(60 + t * 180), Math.round(190 - t * 120), 80, 255];
+  }
+
+  // Tipos de activo, derivados de forma determinista del id (estable por dispositivo).
+  private static readonly KINDS = [
+    { label: 'Vehículo', icon: '🚚' },
+    { label: 'Sensor IoT', icon: '📡' },
+    { label: 'Maquinaria', icon: '🏭' },
+  ] as const;
+  private static readonly COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'] as const;
+
+  private kindOf(id: string): { label: string; icon: string } {
+    let h = 0;
+    for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
+    return Dashboard.KINDS[Math.abs(h) % Dashboard.KINDS.length];
+  }
+
+  private compass(deg: number): string {
+    return Dashboard.COMPASS[Math.round(deg / 45) % 8];
+  }
+
+  /** Burbuja (deck.gl getTooltip) con la ficha del activo al pasar el cursor por encima. */
+  private tooltip(d: DeviceState): { html: string; style: Record<string, string> } {
+    const k = this.kindOf(d.deviceId);
+    const ageSec = Math.max(0, Math.round((Date.now() - Date.parse(d.ts)) / 1000));
+    const row = (lbl: string, val: string, warn = false) =>
+      `<div style="display:flex;justify-content:space-between;gap:16px">
+         <span style="color:#8b949e">${lbl}</span>
+         <span style="color:${warn ? '#ff7b72' : '#e6edf3'};font-variant-numeric:tabular-nums">${val}</span>
+       </div>`;
+    const html =
+      `<div style="font-weight:600;margin-bottom:2px">${k.icon} ${d.deviceId}</div>` +
+      `<div style="color:#58a6ff;margin-bottom:6px">${k.label}</div>` +
+      row('Velocidad', `${d.speedKmh.toFixed(0)} km/h`) +
+      row('Rumbo', `${this.compass(d.headingDeg)} · ${d.headingDeg.toFixed(0)}°`) +
+      row('Combustible', `${d.fuelPct.toFixed(0)} %`, d.fuelPct <= 15) +
+      row('Motor', `${d.engineTempC.toFixed(0)} °C`, d.engineTempC >= 95) +
+      row('Posición', `${d.lat.toFixed(4)}, ${d.lng.toFixed(4)}`) +
+      row('Actualizado', ageSec === 0 ? 'ahora' : `hace ${ageSec}s`);
+    return {
+      html,
+      style: {
+        background: 'rgba(13,17,23,0.95)',
+        border: '1px solid #30363d',
+        borderRadius: '8px',
+        padding: '10px 12px',
+        font: '12px/1.55 system-ui, sans-serif',
+        boxShadow: '0 6px 20px rgba(0,0,0,0.5)',
+        pointerEvents: 'none',
+      },
+    };
   }
 }

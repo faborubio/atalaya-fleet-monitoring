@@ -160,7 +160,12 @@ El SPA de demo apunta al Cloud Run de demo y **muestra un login pulido** (decisi
   > El sitio se llama **`atalaya-demo`** (no `atalaya-dashboard`): tras el teardown de G5b, Firebase
   > **reservó** ese ID por un tiempo, así que se creó uno nuevo (`firebase hosting:sites:create atalaya-demo`).
 - **Componentes:** Cloud Run `atalaya-demo-api` (estado en `infra/terraform-demo/`, backend GCS prefijo
-  `atalaya/demo/state`) · imagen `api:demo` en Artifact Registry · sitio Firebase `atalaya-demo`.
+  `atalaya/demo/state`) · imagen `api:demo2` en Artifact Registry (`:demo` apunta al mismo digest) · sitio
+  Firebase `atalaya-demo`.
+  > **Redeploy 2026-06-25 (AUD-032):** se aplicaron los arreglos visuales (Santiago + calles reales OSM +
+  > velocidad física + semáforos + tooltip). Backend: `docker build/push :demo2` + `terraform apply
+  > -var demo_image=…:demo2` (tag nuevo para forzar revisión). Frontend: `nx build --configuration=demo`
+  > + `firebase deploy --only hosting:atalaya-demo`. Smoke en vivo OK (flota en Santiago, stop-and-go).
 - **Costo:** ~$0 sostenido (Cloud Run min-instances=0 + cpu_idle=true; Hosting gratis; AR ≈ centavos/mes).
   **No requiere teardown** — es el nivel always-on.
 - **Re-desplegar tras un cambio de código del backend:**

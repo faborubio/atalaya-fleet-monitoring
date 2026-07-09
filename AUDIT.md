@@ -36,6 +36,40 @@ proyecto.
 
 ---
 
+## AUD-033 — Revisión de ciberseguridad + triage de alerta de secret scanning (2026-07-09)
+
+**Fase:** Post-pivote (proyecto completo). Revisión de seguridad gatillada por una alerta de GitHub y adopción del artefacto `SECURITY.md` del método personal.
+**Alcance:** alerta "Google API Key" (secret scanning), postura de secretos, dependencias (npm + .NET), superficie de ataque; y evaluación del `MANIFIESTO` (El Método) para mejorar Atalaya.
+**Auditor:** Fabián Rubio + Claude (rol ing. de seguridad senior)
+
+### Hallazgos
+| Sev | Hallazgo | Acción | Estado |
+|-----|----------|--------|--------|
+| 🟠→🔵 | Alerta "Google API Key" = **Firebase Web API Key** ([`deploy-target.ts`](./apps/atalaya-web/src/app/core/deploy-target.ts)) | **Falso positivo en severidad**: la web key es pública por diseño. Mitigación real = *restringir* la key (API + HTTP referrers) en consola GCP, no rotar | Documentado en [SECURITY.md §4](./SECURITY.md); pasos de consola pendientes (usuario) |
+| 🔵 | `System.Net.Http` 4.3.0 + `System.Text.RegularExpressions` 4.3.0 (High) vía xunit, **solo test project** | Fijados a versiones parcheadas (4.3.4 / 4.3.1) en `Atalaya.Api.Tests.csproj`. En net8.0 ni se cargan; se cierra el aviso | ✅ Resuelto (verificado: 0 vulnerables + 48/48 tests) |
+| 🔵 | 49 vulns npm (30 high) | **Todas devDependencies** (vite/esbuild/ws/koa/piscina…): build-time, no shippeadas. `npm audit --omit=dev` = **0** | Documentado (mantenimiento diferido) |
+| ✅ | Secretos reales en el repo | Ninguno: `secrets.tf` usa `random_password`/vars; sin SA keys/`.pem`; `.gitignore` bloquea SA keys | OK |
+
+### El MANIFIESTO aplicado
+El método (v1.1.0) prescribe 8 documentos; Atalaya ya tiene SAD/AUDIT/TROUBLESHOOTING/DEPLOY/CLAUDE/RUNBOOKS.
+**Gap real y oportuno:** faltaba **`SECURITY.md`** (el método manda actualizarlo "al cambiar la postura/superficie"
+— que es justo esta revisión). Se **crea** con modelo de amenazas proporcional, superficie+controles, gestión de
+secretos, triage de la alerta y postura de dependencias. `CASES.md` no se separa (los casos borde viven en la
+"Revisión Arquitectónica" de este AUDIT; proporcionalidad).
+
+### Verificaciones
+- [x] `npm audit --omit=dev` = 0 vulnerabilidades (producción limpia).
+- [x] `dotnet list package --vulnerable --include-transitive` = sin paquetes vulnerables (post-fix).
+- [x] 48/48 tests .NET (+3 Testcontainers skippables) tras el fix.
+- [ ] Restricción de la Firebase Web API Key en consola GCP (acción del usuario, [SECURITY.md §4](./SECURITY.md)).
+
+### Conclusión
+✅ **No hay alerta roja real.** La "Google API Key" es una web key pública por diseño → naranja de *configuración*
+(restringir en consola), no fuga. Deps de producción limpias; deuda de build/.NET-test acotada y en parte cerrada.
+Se adopta `SECURITY.md` del método como fuente única de la postura de seguridad. Pendiente: los pasos de consola GCP.
+
+---
+
 ## AUD-032 — Cierre de casos borde §7–§9 + realismo visual de la demo (2026-06-25)
 
 **Fase:** Post-pivote (proyecto completo). Cierre de la auto-auditoría de casos borde + pulido visual del dashboard de demo.

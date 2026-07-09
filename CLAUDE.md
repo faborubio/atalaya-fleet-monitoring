@@ -52,11 +52,12 @@ El remoto `origin` usa **HTTPS** (autenticado vía `gh`); no hay clave SSH carga
 | [DEMO.md](./DEMO.md) | Plan de demo de portafolio en 2 niveles (InMemory always-on ~$0 + stack efímero). ADR-014 |
 | [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) | Errores encontrados y soluciones |
 | [RUNBOOKS.md](./RUNBOOKS.md) | Operación: qué hacer ante caídas, DLQ replay, retención, deploy, teardown |
+| [SECURITY.md](./SECURITY.md) | Postura de seguridad (modelo de amenazas proporcional, superficie, secretos, deps). AUD-033 |
 | **CLAUDE.md** | Este archivo: contexto entre sesiones |
 
 ## 5. Estado actual
 
-**Fecha de actualización:** 2026-06-25 (G5b hecho+teardown · demo Nivel 1 EN VIVO + Nivel 2 implementado · auto-auditoría de casos borde §1–§9 COMPLETA: 6.11/6.13/8.17/7.16 implementados, resto documentado · arreglos visuales de demo HECHOS: Santiago + calles reales OSM + velocidad física + semáforos + burbuja, AUD-032)
+**Fecha de actualización:** 2026-07-09 (revisión de ciberseguridad [AUD-033]: alerta "Google API Key" = Firebase web key **pública por diseño** (falso positivo de severidad → restringir en consola, no rotar); vulns .NET del test project cerrados; **SECURITY.md creado** del método. Antes, 2026-06-25: G5b+teardown · demo Nivel 1 EN VIVO · casos borde §1–§9 COMPLETA · arreglos visuales de demo, AUD-032)
 **Fase:** 1 + 1.5 + ingesta desacoplada ([AUD-010](./AUDIT.md)) + **Fase 2 completa** (alertas
 [AUD-011](./AUDIT.md) + camino frío [AUD-012](./AUDIT.md)) + **productivización** (CDK
 [AUD-013](./AUDIT.md) + viewport [AUD-014](./AUDIT.md)) + **Fase 2.5 calidad de datos**
@@ -299,8 +300,13 @@ Providencia–Apoquindo, Vicuña Mackenna, Gran Avenida, Irarrázaval—, bakead
 en demo local InMemory. (Modelo de movimiento en [`DemoFleet.cs`](./apps/api/Processing/DemoFleet.cs) + simulador
 [`fleet.ts`](./apps/simulator/src/lib/fleet.ts).)
 
+**Seguridad (AUD-033, [SECURITY.md](./SECURITY.md)) — pendiente de consola (usuario):** restringir la **Firebase
+Web API Key** en GCP Console (API restrictions = Identity Toolkit; Application restrictions = HTTP referrers de los
+dominios de Hosting + localhost) y cerrar la alerta de secret scanning como *won't fix (web key pública)*. No es
+fuga; es hardening anti-abuso. El resto de la revisión (vulns .NET del test, triage de deps) ya está resuelto/documentado.
+
 **Agenda restante:** (1) **ensayo pagado del Nivel 2** (`demo-up` → consola GCP → `demo-down`, ~US$1–2, ~25 min).
-(2 ✅ arreglos visuales hechos.) (3 ✅ casos borde §7–§9 cerrados.) Nota: la **demo Nivel 1 desplegada** tomará
+(2 ✅ arreglos visuales hechos.) (3 ✅ casos borde §7–§9 cerrados.) (4 ✅ revisión de seguridad AUD-033 hecha; solo la restricción de la key en consola queda al usuario.) Nota: la **demo Nivel 1 desplegada** tomará
 los fixes 6.11/7.16 **y los visuales** en su próximo redeploy (`nx build atalaya-web --configuration=demo` +
 `firebase deploy --only hosting:atalaya-demo`; el backend de demo toma los nuevos defaults sin tocar Terraform).
 

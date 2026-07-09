@@ -20,6 +20,18 @@
     <PackageReference Include="Xunit.SkippableFact" Version="1.5.61" />
   </ItemGroup>
 
+  <!--
+    Seguridad (AUD-033): xunit 2.5.3 arrastra transitivamente System.Net.Http 4.3.0 y
+    System.Text.RegularExpressions 4.3.0 (via NETStandard.Library 1.6.1), marcados High por
+    GHSA-7jgj-8wvc-jh57 y GHSA-cmhx-cq75-c4mj. En net8.0 esas assemblies las provee el runtime
+    (no se cargan las del paquete), así que el riesgo real es nulo; se fijan a versiones parcheadas
+    para cerrar el aviso de NuGet/Dependabot. Solo afecta al test project (no se despliega).
+  -->
+  <ItemGroup>
+    <PackageReference Include="System.Net.Http" Version="4.3.4" />
+    <PackageReference Include="System.Text.RegularExpressions" Version="4.3.1" />
+  </ItemGroup>
+
   <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>

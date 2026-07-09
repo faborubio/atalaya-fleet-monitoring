@@ -300,10 +300,11 @@ Providencia–Apoquindo, Vicuña Mackenna, Gran Avenida, Irarrázaval—, bakead
 en demo local InMemory. (Modelo de movimiento en [`DemoFleet.cs`](./apps/api/Processing/DemoFleet.cs) + simulador
 [`fleet.ts`](./apps/simulator/src/lib/fleet.ts).)
 
-**Seguridad (AUD-033, [SECURITY.md](./SECURITY.md)) — pendiente de consola (usuario):** restringir la **Firebase
-Web API Key** en GCP Console (API restrictions = Identity Toolkit; Application restrictions = HTTP referrers de los
-dominios de Hosting + localhost) y cerrar la alerta de secret scanning como *won't fix (web key pública)*. No es
-fuga; es hardening anti-abuso. El resto de la revisión (vulns .NET del test, triage de deps) ya está resuelto/documentado.
+**Seguridad (AUD-033, [SECURITY.md](./SECURITY.md)):** ✅ **Firebase Web API Key restringida en consola**
+(2026-07-09, proyecto `fabian-portafolio`: API restrictions = Identity Toolkit + HTTP referrers de Hosting +
+localhost). No era fuga (web key pública por diseño); fue hardening anti-abuso. Vulns .NET del test resueltos + triage
+de deps documentado. **Único pendiente menor:** cerrar la alerta de secret scanning en GitHub como *won't fix* (y
+opcional: email-enumeration protection en Identity Platform).
 
 **Agenda restante:** (1) **ensayo pagado del Nivel 2** (`demo-up` → consola GCP → `demo-down`, ~US$1–2, ~25 min).
 (2 ✅ arreglos visuales hechos.) (3 ✅ casos borde §7–§9 cerrados.) (4 ✅ revisión de seguridad AUD-033 hecha; solo la restricción de la key en consola queda al usuario.) Nota: la **demo Nivel 1 desplegada** tomará

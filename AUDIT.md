@@ -61,12 +61,13 @@ secretos, triage de la alerta y postura de dependencias. `CASES.md` no se separa
 - [x] `npm audit --omit=dev` = 0 vulnerabilidades (producción limpia).
 - [x] `dotnet list package --vulnerable --include-transitive` = sin paquetes vulnerables (post-fix).
 - [x] 48/48 tests .NET (+3 Testcontainers skippables) tras el fix.
-- [ ] Restricción de la Firebase Web API Key en consola GCP (acción del usuario, [SECURITY.md §4](./SECURITY.md)).
+- [x] Restricción de la Firebase Web API Key en consola GCP (2026-07-09, proyecto `fabian-portafolio`: API restrictions = Identity Toolkit + HTTP referrers de Hosting/localhost). Pendiente menor: cerrar la alerta en GitHub + email-enumeration protection ([SECURITY.md §4](./SECURITY.md)).
 
 ### Conclusión
 ✅ **No hay alerta roja real.** La "Google API Key" es una web key pública por diseño → naranja de *configuración*
 (restringir en consola), no fuga. Deps de producción limpias; deuda de build/.NET-test acotada y en parte cerrada.
-Se adopta `SECURITY.md` del método como fuente única de la postura de seguridad. Pendiente: los pasos de consola GCP.
+Se adopta `SECURITY.md` del método como fuente única de la postura de seguridad. **Key ya restringida en consola
+(2026-07-09)**; solo resta cerrar la alerta en GitHub como *won't fix (web key pública)*.
 
 ---
 

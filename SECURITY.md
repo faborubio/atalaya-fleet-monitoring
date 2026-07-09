@@ -67,13 +67,14 @@ pensados para ir en el cliente y poder commitearse
 **Riesgo real y mitigación (abuso, no fuga):** una web key *sin restringir* permite martillar
 Identity Platform (alta de cuentas / cuota). Postura requerida:
 
-- [ ] **Restringir la key** (GCP Console → Credentials → API restrictions): solo **Identity Toolkit API**.
-- [ ] **Application restrictions = HTTP referrers**: `https://atalaya-demo.web.app/*`,
-      `https://atalaya-dashboard.web.app/*`, `http://localhost:4200/*`.
+- [x] **Restringir la key** (GCP Console → Credentials → API restrictions): solo **Identity Toolkit API**. *(Aplicado 2026-07-09, proyecto `fabian-portafolio`.)*
+- [x] **Application restrictions = HTTP referrers**: `https://atalaya-demo.web.app/*`,
+      `https://atalaya-dashboard.web.app/*`, `http://localhost:4200/*`. *(Aplicado 2026-07-09.)*
 - [ ] **Identity Platform**: activar *email enumeration protection*; cerrar signup público si no se usa.
 - [ ] **Cerrar la alerta** en GitHub como *"used in code / won't fix — Firebase web key, pública por diseño"*.
 
-> Estos pasos son de **consola GCP** (los ejecuta el responsable del proyecto). Marcar arriba al aplicarlos.
+> La key vive en el proyecto **`fabian-portafolio`** (no `atalaya-fleet-monitoring`, que es el nombre del repo).
+> Los cambios de restricción tardan **hasta ~5 min** en propagar. Marcar arriba al aplicar cada paso.
 
 ---
 

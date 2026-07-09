@@ -296,9 +296,10 @@ ningún caso borde pendiente. Tests: **51/51** .NET (incl. 3 nuevos del cooldown
 Chile**; los puntos **recorren calles reales** (geometría de OpenStreetMap/Overpass de 5 arterias —Alameda,
 Providencia–Apoquindo, Vicuña Mackenna, Gran Avenida, Irarrázaval—, bakeada estática, $0); **velocidad física**
 (km/h reales, `Demo:SpeedFactor`) con **semáforos** (stop-and-go); **burbuja de info** al hover (deck.gl
-`getTooltip`, tipo 🚚/📡/🏭 + métricas); **auto-recentrado** del mapa sobre la flota al llegar datos. Verificado
-en demo local InMemory. (Modelo de movimiento en [`DemoFleet.cs`](./apps/api/Processing/DemoFleet.cs) + simulador
-[`fleet.ts`](./apps/simulator/src/lib/fleet.ts).)
+`getTooltip`, tipo 🚚/📡/🏭 + métricas); **auto-recentrado** del mapa sobre la flota al llegar datos.
+**Redesplegado y verificado EN VIVO** (imagen `api:demo2` en Cloud Run + SPA en `atalaya-demo.web.app`; smoke OK:
+flota en Santiago sobre calles reales, stop-and-go — ver [DEMO.md §1.7](./DEMO.md)). (Modelo de movimiento en
+[`DemoFleet.cs`](./apps/api/Processing/DemoFleet.cs) + simulador [`fleet.ts`](./apps/simulator/src/lib/fleet.ts).)
 
 **Seguridad (AUD-033, [SECURITY.md](./SECURITY.md)):** ✅ **Firebase Web API Key restringida en consola**
 (2026-07-09, proyecto `fabian-portafolio`: API restrictions = Identity Toolkit + HTTP referrers de Hosting +
@@ -306,10 +307,17 @@ localhost). No era fuga (web key pública por diseño); fue hardening anti-abuso
 de deps documentado. **Único pendiente menor:** cerrar la alerta de secret scanning en GitHub como *won't fix* (y
 opcional: email-enumeration protection en Identity Platform).
 
-**Agenda restante:** (1) **ensayo pagado del Nivel 2** (`demo-up` → consola GCP → `demo-down`, ~US$1–2, ~25 min).
-(2 ✅ arreglos visuales hechos.) (3 ✅ casos borde §7–§9 cerrados.) (4 ✅ revisión de seguridad AUD-033 hecha; solo la restricción de la key en consola queda al usuario.) Nota: la **demo Nivel 1 desplegada** tomará
-los fixes 6.11/7.16 **y los visuales** en su próximo redeploy (`nx build atalaya-web --configuration=demo` +
-`firebase deploy --only hosting:atalaya-demo`; el backend de demo toma los nuevos defaults sin tocar Terraform).
+**Agenda restante (para la próxima sesión) — solo quedan ítems menores/opcionales:**
+1. **Ensayo pagado del Nivel 2** (`infra/demo-up.ps1` → consola GCP → `infra/demo-down.ps1`, ~US$1–2, ~25 min) —
+   el único trabajo real pendiente; opcional (la demo Nivel 1 ya cubre el portafolio).
+2. **Cerrar la alerta de secret-scanning en GitHub** como *won't fix* (1 min; la Firebase web key **ya está
+   restringida** en consola, [SECURITY.md §4](./SECURITY.md)). No se cierra sola.
+3. *(Opcional)* PR de Dependabot `dependabot/npm_and_yarn/js-yaml-3.15.0` (dev-dep, riesgo bajo) · *email-enumeration
+   protection* en Identity Platform.
+
+**Todo lo sustancial está HECHO y en vivo:** producto completo (AWS/LocalStack) + pivote a GCP G1…G5b desplegado y
+con teardown · demo Nivel 1 EN VIVO **con los arreglos visuales redesplegados** · casos borde §1–§9 cerrados ·
+revisión de ciberseguridad (AUD-033) con la key restringida.
 
 Backlog AWS-era **todo cerrado** (referencia rápida):
 - ✅ Mapa deck.gl + virtual scroll ([AUD-026](./AUDIT.md)) · ✅ DLQ replay ([AUD-027](./AUDIT.md)) ·

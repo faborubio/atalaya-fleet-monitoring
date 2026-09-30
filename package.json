@@ -36,7 +36,7 @@
     "@angular/language-service": "~20.3.0",
     "@eslint/js": "^9.8.0",
     "@google-cloud/bigquery": "^7.9.0",
-    "@nx/angular": "21.6.11",
+    "@nx/angular": "23.2.1",
     "@nx/esbuild": "21.6.11",
     "@nx/eslint": "21.6.11",
     "@nx/eslint-plugin": "21.6.11",
